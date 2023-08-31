@@ -80,7 +80,7 @@ exit_inner_loop:;
 
 ui18nstring UI18N::TranslationEngine::get(const char* id, const std::unordered_map<ui18nstring, ui18nstring>& args) noexcept
 {
-
+    return {};
 }
 
 UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const char* directory) noexcept

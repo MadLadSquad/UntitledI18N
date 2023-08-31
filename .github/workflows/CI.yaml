@@ -16,7 +16,7 @@ jobs:
           git -c "http.extraheader=$auth_header" -c protocol.version=2 submodule update --init --force --recursive --depth=1
     - name: Get dependencies
       shell: bash
-      run: sudo apt-get update && sudo apt-get install gcc make g++ libtool cmake libyaml-cpp libyaml-cpp-dev
+      run: sudo apt-get update && sudo apt-get install gcc make g++ libtool cmake libyaml-cpp-dev
     - name: Build
       run: "bash ci.sh"
   Windows:

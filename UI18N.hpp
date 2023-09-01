@@ -46,8 +46,8 @@ namespace UI18N
 
         ~TranslationEngine() = default;
     private:
-        InitialisationResult parseConfig(const char* directory) noexcept;
-        InitialisationResult parseTranslations(const char* file) noexcept;
+        InitialisationResult parseConfig(const char* directory);
+        InitialisationResult parseTranslations(const char* file);
 
         LanguageCodes currentLocale = en_US;
 

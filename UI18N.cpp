@@ -83,7 +83,7 @@ ui18nstring UI18N::TranslationEngine::get(const char* id, const std::unordered_m
     return {};
 }
 
-UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const char* directory) noexcept
+UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const char* directory)
 {
     YAML::Node out;
     try
@@ -111,7 +111,7 @@ void UI18N::TranslationEngine::pushVariable(const ui18nstring& name, const ui18n
     variables.insert(std::pair<ui18nstring, ui18nstring>{ name, val });
 }
 
-UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const char *file) noexcept
+UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const char *file)
 {
     return UI18N_INIT_RESULT_SUCCESS;
 }

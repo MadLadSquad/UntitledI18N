@@ -5,7 +5,6 @@ project(UntitledI18N VERSION 1.0.0.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 99)
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 
 include_directories(.)
 
@@ -22,6 +21,7 @@ if (BUILD_VARIANT_VENDOR OR WIN32)
         include_directories("yaml-cpp/include/yaml-cpp" "yaml-cpp/include")
     endif()
 else()
+    set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
     include(FindYamlCpp)
     find_package(YamlCpp REQUIRED)
     include_directories(${YamlCpp_INCLUDE_PATH})

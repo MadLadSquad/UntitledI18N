@@ -35,7 +35,7 @@ namespace UI18N
     typedef UI18N_LanguageCodes LanguageCodes;
     typedef UI18N_InitialisationResult InitialisationResult;
 
-    class TranslationEngine
+    class UVK_PUBLIC_API TranslationEngine
     {
     public:
         TranslationEngine() = default;

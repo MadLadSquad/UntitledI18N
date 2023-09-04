@@ -32,6 +32,7 @@
 *.app
 
 main.cpp
+main.c
 cmake-build-*/
 build/
 .idea/

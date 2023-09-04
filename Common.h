@@ -18,6 +18,9 @@
     #define UVK_PUBLIC_TMPL_API
 #endif
 
+#include <stddef.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C"
 {

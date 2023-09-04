@@ -30,10 +30,21 @@
     using ui18nmap = std::unordered_map<T, T2>;
 #endif
 
+    namespace YAML
+    {
+        class Node;
+    }
+
 namespace UI18N
 {
     typedef UI18N_LanguageCodes LanguageCodes;
     typedef UI18N_InitialisationResult InitialisationResult;
+
+    // Returns an empty string if out of bounds
+    UVK_PUBLIC_API const char* languageCodeToString(LanguageCodes code) noexcept;
+
+    // Returns UI18N_LANGUAGE_CODES_COUNT if it does not fit
+    UVK_PUBLIC_API LanguageCodes stringToLanguageCode(const char* code) noexcept;
 
     class UVK_PUBLIC_API TranslationEngine
     {
@@ -41,17 +52,43 @@ namespace UI18N
         TranslationEngine() = default;
         InitialisationResult init(const char* directory, LanguageCodes defaultLocale = en_US) noexcept;
 
-        ui18nstring get(const char* id, const ui18nmap<ui18nstring, ui18nstring>& args = {}) noexcept;
+        ui18nstring get(const char* id, const std::vector<ui18nstring>& positionalArgs = {}, const ui18nmap<ui18nstring, ui18nstring>& args = {}) noexcept;
         void pushVariable(const ui18nstring& name, const ui18nstring& val) noexcept;
 
         ~TranslationEngine() = default;
     private:
+        friend class Internal;
+
+        // Used for the pattern-matching functionality
+        struct Switch
+        {
+            bool bExists = false;
+            ui18nstring defaultValue;
+            ui18nmap<ui18nstring, ui18nstring> patterns{};
+        };
+
+        struct Variable
+        {
+            ui18nstring text;
+            ui18nmap<ui18nstring, Switch> references;
+        };
+
+        static void replaceVariableInString(ui18nstring& str, const ui18nstring& replaceName, const ui18nstring& replace) noexcept;
+
         InitialisationResult parseConfig(const char* directory);
         InitialisationResult parseTranslations(const char* file);
+        void parseVariablePatternMatching(const YAML::Node& node, Variable& variable) noexcept;
+
+        static void getHandlePositionalArguments(ui18nstring& text, const std::vector<ui18nstring>& args) noexcept;
+        void getHandleVariables(ui18nstring& text, const ui18nmap<ui18nstring, Switch>& references, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept;
+        void getHandleReplaceWithVal(const Switch& switchA, ui18nstring& text, const std::pair<ui18nstring, ui18nstring>& variable, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept;
 
         LanguageCodes currentLocale = en_US;
 
+        std::vector<ui18nstring> cAPITmpResultStorage;
+
+        ui18nmap<ui18nstring, ui18nstring> terms{};
         ui18nmap<ui18nstring, ui18nstring> variables{};
-        std::array<ui18nmap<ui18nstring, ui18nstring>, UI18N_LANGUAGE_CODES_COUNT> translations{};
+        std::array<ui18nmap<ui18nstring, Variable>, UI18N_LANGUAGE_CODES_COUNT> translations{};
     };
 }

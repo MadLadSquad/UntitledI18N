@@ -2,6 +2,7 @@
 #include <yaml-cpp/yaml.h>
 #include <iostream>
 #include <filesystem>
+#include <cstring>
 
 namespace UI18N
 {
@@ -47,9 +48,9 @@ UI18N::InitialisationResult UI18N::TranslationEngine::init(const char* directory
     const ui18nstring ymlExtShort = ".yml";
     for (auto& a : std::filesystem::directory_iterator(std::filesystem::path(directory)))
     {
-        if (!a.is_directory() && a.path().string().ends_with(".yaml"))
+        if (!a.is_directory() && (a.path().string().ends_with(".yaml") || a.path().string().ends_with(".yml")))
         {
-            auto filename = a.path().string();
+            auto filename = a.path().filename().string();
             for (auto& LanguageCodesAsString : LanguageCodesAsStrings)
             {
                 if (filename == (LanguageCodesAsString + ymlExt) || filename == (LanguageCodesAsString + ymlExtShort))
@@ -62,8 +63,8 @@ UI18N::InitialisationResult UI18N::TranslationEngine::init(const char* directory
                 {
                     auto tmp = filename;
                     for (auto& f : tmp)
-                        if (f == '_')
-                            f = '-';
+                        if (f == '-')
+                            f = '_';
                     if (tmp == (LanguageCodesAsString + ymlExt) || filename == (LanguageCodesAsString + ymlExtShort))
                     {
                         if (parseTranslations(filename.c_str()) == UI18N_INIT_RESULT_INVALID_TRANSLATION)
@@ -78,9 +79,137 @@ exit_inner_loop:;
     return result;
 }
 
-ui18nstring UI18N::TranslationEngine::get(const char* id, const std::unordered_map<ui18nstring, ui18nstring>& args) noexcept
+ui18nstring UI18N::TranslationEngine::get(const char* id, const std::vector<ui18nstring>& positionalArgs, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept
 {
-    return {};
+    // Note: We intentionally use the C++ standard map access syntax, because we don't want to be doing exception
+    // handling, and we also want to return an empty string if accessed in the future.
+    auto rval = translations[currentLocale][id];
+    if (rval.text.empty())
+        return rval.text;
+
+    // Handle positional arguments with {} syntax
+    getHandlePositionalArguments(rval.text, positionalArgs);
+
+    // Handle variable arguments with {var} syntax
+    getHandleVariables(rval.text, rval.references, args);
+
+    return rval.text;
+}
+
+UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const char* file)
+{
+    YAML::Node out;
+    try
+    {
+        out = YAML::LoadFile(file);
+    }
+    catch (YAML::BadFile&)
+    {
+        return UI18N_INIT_RESULT_INVALID_TRANSLATION;
+    }
+
+    if (!out["translations"])
+        return UI18N_INIT_RESULT_INVALID_TRANSLATION;
+
+    for (const auto& a : out["translations"])
+    {
+        if (a["id"] && a["text"])
+        {
+            Variable variable = { .text = a["text"].as<ui18nstring>(), .references = {} };
+            bool bIteratingVariable = false;
+            size_t beginCut = 0;
+
+            // Handle variable references
+            for (size_t i = 0; i < variable.text.size(); i++)
+            {
+                auto& it = variable.text[i];
+                if ((i + 1) != variable.text.size())
+                {
+                    auto& nit = variable.text[i + 1];
+                    if (it == '{')
+                    {
+                        if (nit == '}')
+                            goto exit_next_it;
+                        else
+                        {
+                            bIteratingVariable = true;
+                            // Got to the next character position
+                            beginCut = i + 1;
+                        }
+                    }
+                }
+
+                if (it == '}' && bIteratingVariable)
+                {
+                    bIteratingVariable = false;
+                    variable.references.insert(std::pair<ui18nstring, Switch>{ variable.text.substr(beginCut, i - beginCut), {} });
+                }
+exit_next_it:;
+            }
+
+            // Handle terms
+            for (auto& f : variable.references)
+            {
+                for (auto& h : terms)
+                {
+                    if (f.first == h.first)
+                    {
+                        replaceVariableInString(variable.text, h.first, h.second);
+                        goto exit_inner_loop_init_2;
+                    }
+                }
+exit_inner_loop_init_2:;
+            }
+
+            if (a["switch"])
+                parseVariablePatternMatching(a["switch"], variable);
+
+            translations[currentLocale].insert(std::pair<ui18nstring, Variable>{ a["id"].as<ui18nstring>(), variable });
+        }
+    }
+
+    return UI18N_INIT_RESULT_SUCCESS;
+}
+
+void UI18N::TranslationEngine::parseVariablePatternMatching(const YAML::Node& node, Variable& variable) noexcept
+{
+    for (auto& f : node)
+    {
+        auto var = f["var"];
+        if (!var)
+            continue;
+
+        const auto variableString = var.as<ui18nstring>();
+        Switch& vswitch = variable.references[variableString];
+
+        ui18nstring defaultVal;
+        if (f["default"])
+            defaultVal = f["default"].as<ui18nstring>();
+        // Replace terms in the default string
+        for (auto& a : terms)
+            replaceVariableInString(defaultVal, a.first, a.second);
+
+        vswitch.defaultValue = defaultVal;
+        vswitch.bExists = true;
+
+        if (f["cases"])
+        {
+            for (auto& h : f["cases"])
+            {
+                ui18nstring result;
+                if (!h["case"] || !h["result"])
+                    goto pattern_match_skip_inner;
+
+                result = h["result"].as<ui18nstring>();
+                // Replace terms in the result string
+                for (auto& a : terms)
+                    replaceVariableInString(result, a.first, a.second);
+
+                vswitch.patterns.insert(std::pair<ui18nstring, ui18nstring>{ h["case"].as<ui18nstring>(), result });
+pattern_match_skip_inner:;
+            }
+        }
+    }
 }
 
 UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const char* directory)
@@ -95,13 +224,13 @@ UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const char* di
         return UI18N_INIT_RESULT_INVALID_CONFIG;
     }
 
-    auto terms = out["terms"];
+    auto terms_l = out["terms"];
 
     // Wow, this is inefficient as shit
-    if (terms)
-        for (auto& a : terms.as<std::vector<ui18nmap<ui18nstring, ui18nstring>>>())
+    if (terms_l)
+        for (auto& a : terms_l.as<std::vector<ui18nmap<ui18nstring, ui18nstring>>>())
             for (auto& f : a)
-                pushVariable(f.first, f.second);
+                terms.insert(std::pair<ui18nstring, ui18nstring>{ f.first, f.second });
 
     return UI18N_INIT_RESULT_SUCCESS;
 }
@@ -111,8 +240,127 @@ void UI18N::TranslationEngine::pushVariable(const ui18nstring& name, const ui18n
     variables.insert(std::pair<ui18nstring, ui18nstring>{ name, val });
 }
 
-UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const char *file)
+const char* UI18N::languageCodeToString(LanguageCodes code) noexcept
 {
-    return UI18N_INIT_RESULT_SUCCESS;
+    if (code >= UI18N_LANGUAGE_CODES_COUNT)
+        return "";
+    return LanguageCodesAsStrings[code];
 }
 
+ui18nstring toLower(const ui18nstring& arg) noexcept;
+
+UI18N::LanguageCodes UI18N::stringToLanguageCode(const char* code) noexcept
+{
+    for (size_t i = 0; i < UI18N_LANGUAGE_CODES_COUNT; i++)
+    {
+        ui18nstring tmp = toLower(code);
+        ui18nstring languageCode = toLower(LanguageCodesAsStrings[i]);
+
+        if (tmp == languageCode)
+            return static_cast<LanguageCodes>(i);
+        else
+        {
+            for (auto& a : tmp)
+                if (a == '-')
+                    a = '_';
+            if (tmp == languageCode)
+                return static_cast<LanguageCodes>(i);
+        }
+    }
+    return UI18N_LANGUAGE_CODES_COUNT;
+}
+
+void UI18N::TranslationEngine::replaceVariableInString(ui18nstring& str, const ui18nstring& replaceName, const ui18nstring& replace) noexcept
+{
+    ui18nstring pattern = "{" + replaceName + "}";
+    for (size_t offset = str.find(pattern); offset != ui18nstring::npos; offset = str.find(pattern, offset))
+        str.replace(offset, pattern.size(), replace);
+}
+
+void UI18N::TranslationEngine::getHandlePositionalArguments(ui18nstring& text, const std::vector<ui18nstring>& args) noexcept
+{
+    size_t ppos = 0;
+    for (const auto& f : args)
+    {
+        auto pos = text.find("{}", ppos);
+        ppos = pos;
+        if (pos == ui18nstring::npos)
+            break;
+        text.replace(pos, 2, f);
+    }
+}
+
+void UI18N::TranslationEngine::getHandleVariables(ui18nstring& text, const ui18nmap<ui18nstring, Switch>& references, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept
+{
+    for (const auto& f : references)
+    {
+        // Engine variables, added for long-term storage by the "pushVariable" method
+        for (auto& var : variables)
+        {
+            // If the reference and variable names match
+            if (f.first == var.first)
+            {
+                getHandleReplaceWithVal(f.second, text, var, {});
+                goto exit_inner_loop_get_1;
+            }
+        }
+        // Variables as argument, added by the "args" argument of this function
+        for (auto& var : args)
+        {
+            if (f.first == var.first)
+            {
+                getHandleReplaceWithVal(f.second, text, var, args);
+                goto exit_inner_loop_get_1;
+            }
+        }
+        // Both  functions skip to this point because we ignore duplicates, so if one loop matches a variable reference
+        // we should directly escape, not reiterate through the other variables again, just to waste cycles
+exit_inner_loop_get_1:;
+    }
+}
+
+void UI18N::TranslationEngine::getHandleReplaceWithVal(const Switch& switchA, ui18nstring& text, const std::pair<ui18nstring, ui18nstring>& variable, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept
+{
+    // If we have a switch statement
+    if (switchA.bExists)
+    {
+        // Iterate patterns
+        for (auto& a : switchA.patterns)
+        {
+            // If the case key is equal to the value of the variable
+            if (a.first == variable.second)
+            {
+                auto resultTmp = a.second;
+                // Replace any variables that may be templated into the result key
+                for (auto& f : variables)
+                    replaceVariableInString(resultTmp, f.first, f.second);
+                // Also from the temporary variable list if provided
+                for (auto& f : args)
+                    replaceVariableInString(resultTmp, f.first, f.second);
+
+                replaceVariableInString(text, variable.first, resultTmp);
+                return;
+            }
+        }
+        // Replace any variables in the default variable
+        auto defaultValTmp = switchA.defaultValue;
+        for (auto& a : variables)
+            replaceVariableInString(defaultValTmp, a.first, a.second);
+        // Also from the temporary variable list if provided
+        for (auto& a : args)
+            replaceVariableInString(defaultValTmp, a.first, a.second);
+
+        // Finally replace everything in the default value
+        replaceVariableInString(text, variable.first, defaultValTmp);
+    }
+    else // Default behaviour
+        replaceVariableInString(text, variable.first, variable.second);
+}
+
+ui18nstring toLower(const ui18nstring& arg) noexcept
+{
+    ui18nstring tmp = arg;
+    for (auto& a : tmp)
+        a = (char)tolower(a);
+    return tmp;
+}

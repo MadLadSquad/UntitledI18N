@@ -1,6 +1,5 @@
 #include "cui18n.h"
 #include <UI18N.hpp>
-#include <cstring>
 
 #define cast(x) ((UI18N::TranslationEngine*)x)
 

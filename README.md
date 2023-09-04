@@ -10,10 +10,11 @@ abstractions and interfaces to query system and user language and locale setting
 Features:
 - [x] Full C and C++ API for all features and abstractions
 - [x] Translation API
-- [x] Locale API
-- [x] Pluralisation using cases, genders and counting switches 
-- [x] Data for components of the current locale such as the decimal separator
-- [x] Custom locale builder interface
+    - [x] Static string interpolation
+    - [x] Interpolation using positional arguments
+    - [x] Dynamic string interpolation
+    - [x] Conditional string interpolation
+
 
 ## The custom translation format
 One of the distinctive features of the library is the custom translation file format. It's a YAML-based format that 
@@ -62,4 +63,4 @@ and other grammatical concepts.
 
 ## Installation and Learning
 All documentation, including install instructions, can be found on the 
-[wiki](https://github.com/MadLadSquad/UntitledI18N/wiki)
+[wiki](https://github.com/MadLadSquad/UntitledI18N/wiki).

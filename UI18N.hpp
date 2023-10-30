@@ -52,8 +52,13 @@ namespace UI18N
         TranslationEngine() = default;
         InitialisationResult init(const char* directory, LanguageCodes defaultLocale = en_US) noexcept;
 
+        void setCurrentLocale(LanguageCodes locale) noexcept;
+
         ui18nstring get(const char* id, const std::vector<ui18nstring>& positionalArgs = {}, const ui18nmap<ui18nstring, ui18nstring>& args = {}) noexcept;
         void pushVariable(const ui18nstring& name, const ui18nstring& val) noexcept;
+
+        // Returns a list of all locales that contain at least 1 translation
+        const std::vector<LanguageCodes>& getExistingLocales() noexcept;
 
         ~TranslationEngine() = default;
     private:
@@ -76,7 +81,7 @@ namespace UI18N
         static void replaceVariableInString(ui18nstring& str, const ui18nstring& replaceName, const ui18nstring& replace) noexcept;
 
         InitialisationResult parseConfig(const char* directory);
-        InitialisationResult parseTranslations(const char* file);
+        InitialisationResult parseTranslations(const char* file, size_t lc);
         void parseVariablePatternMatching(const YAML::Node& node, Variable& variable) noexcept;
 
         static void getHandlePositionalArguments(ui18nstring& text, const std::vector<ui18nstring>& args) noexcept;
@@ -86,6 +91,8 @@ namespace UI18N
         LanguageCodes currentLocale = en_US;
 
         std::vector<ui18nstring> cAPITmpResultStorage;
+
+        std::vector<LanguageCodes> existingLocales{};
 
         ui18nmap<ui18nstring, ui18nstring> terms{};
         ui18nmap<ui18nstring, ui18nstring> variables{};

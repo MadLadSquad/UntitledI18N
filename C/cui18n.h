@@ -27,6 +27,9 @@ extern "C"
     UVK_PUBLIC_API const char* UI18N_TranslationEngine_get(UI18N_CTranslationEngine* engine, const char* id, char** pargv, size_t pargc, UI18N_Pair* argv, size_t argc);
     UVK_PUBLIC_API void UI18N_TranslationEngine_pushVariable(UI18N_CTranslationEngine* engine, const char* name, const char* val);
 
+    UVK_PUBLIC_API void UI18N_TranslationEngine_setCurrentLocale(UI18N_CTranslationEngine* engine, UI18N_LanguageCodes locale);
+    UVK_PUBLIC_API const UI18N_LanguageCodes* UI18N_TranslationEngine_getExistingLocales(UI18N_CTranslationEngine* engine, size_t* size);
+
 #ifdef __cplusplus
 }
 #endif

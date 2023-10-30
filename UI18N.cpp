@@ -49,11 +49,12 @@ UI18N::InitialisationResult UI18N::TranslationEngine::init(const char* directory
         if (!a.is_directory() && (a.path().string().ends_with(".yaml") || a.path().string().ends_with(".yml")))
         {
             auto filename = a.path().filename().string();
-            for (auto& LanguageCodesAsString : LanguageCodesAsStrings)
+            for (size_t i = 0; i < UI18N_LANGUAGE_CODES_COUNT; i++)
             {
-                if (filename == (LanguageCodesAsString + ymlExt) || filename == (LanguageCodesAsString + ymlExtShort))
+                auto& lc = LanguageCodesAsStrings[i];
+                if (filename == (lc + ymlExt) || filename == (lc + ymlExtShort))
                 {
-                    if (parseTranslations(filename.c_str()) == UI18N_INIT_RESULT_INVALID_TRANSLATION)
+                    if (parseTranslations(absolute(a.path()).string().c_str(), i) == UI18N_INIT_RESULT_INVALID_TRANSLATION)
                         result = UI18N_INIT_RESULT_INVALID_TRANSLATION;
                     goto exit_inner_loop;
                 }
@@ -63,9 +64,9 @@ UI18N::InitialisationResult UI18N::TranslationEngine::init(const char* directory
                     for (auto& f : tmp)
                         if (f == '-')
                             f = '_';
-                    if (tmp == (LanguageCodesAsString + ymlExt) || filename == (LanguageCodesAsString + ymlExtShort))
+                    if (tmp == (lc + ymlExt) || filename == (lc + ymlExtShort))
                     {
-                        if (parseTranslations(filename.c_str()) == UI18N_INIT_RESULT_INVALID_TRANSLATION)
+                        if (parseTranslations(absolute(a.path()).string().c_str(), i) == UI18N_INIT_RESULT_INVALID_TRANSLATION)
                             result = UI18N_INIT_RESULT_INVALID_TRANSLATION;
                         goto exit_inner_loop;
                     }
@@ -74,6 +75,12 @@ UI18N::InitialisationResult UI18N::TranslationEngine::init(const char* directory
         }
 exit_inner_loop:;
     }
+
+    // Record the locales that have at least 1 translation
+    for (size_t i = 0; i < UI18N_LANGUAGE_CODES_COUNT; i++)
+        if (!translations[i].empty())
+            existingLocales.push_back((LanguageCodes)i);
+
     return result;
 }
 
@@ -94,7 +101,7 @@ ui18nstring UI18N::TranslationEngine::get(const char* id, const std::vector<ui18
     return rval.text;
 }
 
-UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const char* file)
+UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const char* file, size_t lc)
 {
     YAML::Node out;
     try
@@ -162,7 +169,7 @@ exit_inner_loop_init_2:;
             if (a["switch"])
                 parseVariablePatternMatching(a["switch"], variable);
 
-            translations[currentLocale].insert(std::pair<ui18nstring, Variable>{ a["id"].as<ui18nstring>(), variable });
+            translations[lc].insert(std::pair<ui18nstring, Variable>{ a["id"].as<ui18nstring>(), variable });
         }
     }
 
@@ -353,6 +360,16 @@ void UI18N::TranslationEngine::getHandleReplaceWithVal(const Switch& switchA, ui
     }
     else // Default behaviour
         replaceVariableInString(text, variable.first, variable.second);
+}
+
+void UI18N::TranslationEngine::setCurrentLocale(UI18N::LanguageCodes locale) noexcept
+{
+    currentLocale = locale;
+}
+
+const std::vector<UI18N::LanguageCodes>& UI18N::TranslationEngine::getExistingLocales() noexcept
+{
+    return existingLocales;
 }
 
 ui18nstring toLower(const ui18nstring& arg) noexcept

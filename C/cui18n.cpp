@@ -61,3 +61,15 @@ void UI18N_TranslationEngine_pushVariable(UI18N_CTranslationEngine* engine, cons
 {
     cast(engine)->pushVariable(name, val);
 }
+
+void UI18N_TranslationEngine_setCurrentLocale(UI18N_CTranslationEngine* engine, UI18N_LanguageCodes locale)
+{
+    cast(engine)->setCurrentLocale(locale);
+}
+
+const UI18N_LanguageCodes* UI18N_TranslationEngine_getExistingLocales(UI18N_CTranslationEngine* engine, size_t* size)
+{
+    auto& locales = cast(engine)->getExistingLocales();
+    *size = locales.size();
+    return locales.data();
+}

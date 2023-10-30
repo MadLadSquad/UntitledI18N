@@ -18,7 +18,7 @@ namespace UI18N
         "es_NI","es_PA","es_PE","es_PR","es_PY","es_SV","es_US","es_UY","es_VE","et_EE","eu_ES","fa_IR","ff_SN","fi_FI",
         "fil_PH","fo_FO","fr_BE","fr_CA","fr_CH","fr_FR","fr_LU","fur_IT","fy_DE","fy_NL","ga_IE","gd_GB","gez_ER",
         "gez_ET","gl_ES","gu_IN","gv_GB","ha_NG","hak_TW","he_IL","hi_IN","hif_FJ","hne_IN","hr_HR","hsb_DE","ht_HT",
-        "hu_HU","hy_AM","ia_FR","id_ID","ig_NG","ik_CA","is_IS","it_CH","it_IT","iu_CA","ka_GE","kab_DZ","kk_KZ",
+        "hu_HU","hy_AM","ia_FR","id_ID","ig_NG","ik_CA","is_IS","it_CH","it_IT","iu_CA", "jp_JP", "ka_GE","kab_DZ","kk_KZ",
         "kl_GL","km_KH","kn_IN","kok_IN","ks_IN","ku_TR","kw_GB","ky_KG","lb_LU","lg_UG","li_BE","li_NL","lij_IT",
         "ln_CD","lo_LA","lt_LT","lv_LV","lzh_TW","mag_IN","mai_IN","mai_NP","mfe_MU","mg_MG","mhr_RU","mi_NZ","miq_NI",
         "mjw_IN","mk_MK","ml_IN","mn_MN","mni_IN","mnw_MM","mr_IN","ms_MY","mt_MT","my_MM","nan_TW","nb_NO","nds_DE",

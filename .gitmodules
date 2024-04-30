@@ -1,3 +1,6 @@
 [submodule "yaml-cpp"]
 	path = yaml-cpp
 	url = https://github.com/MadLadSquad/yaml-cpp.git
+[submodule "parallel-hashmap"]
+	path = parallel-hashmap
+	url = https://github.com/MadLadSquad/parallel-hashmap.git

@@ -1,39 +1,28 @@
 #pragma once
 #include "Common.h"
+#include "parallel-hashmap/parallel_hashmap/phmap.h"
 #include <array>
 #include <vector>
 
 #ifdef UI18N_CUSTOM_STRING
     #ifdef UI18N_CUSTOM_STRING_INCLUDE
-		#include UI18N_CUSTOM_STRING_INCLUDE
-		typedef UI18N_CUSTOM_STRING ui18nstring;
-	#else
-		#error UI18N_CUSTOM_STRING defined but UI18N_CUSTOM_STRING_INCLUDE not defined, it is needed to include the necessary headers for the string, and should contain the name of the header wrapped in ""
-	#endif
+        #include UI18N_CUSTOM_STRING_INCLUDE
+        typedef UI18N_CUSTOM_STRING ui18nstring;
+    #else
+        #error UI18N_CUSTOM_STRING defined but UI18N_CUSTOM_STRING_INCLUDE not defined, it is needed to include the necessary headers for the string, and should contain the name of the header wrapped in ""
+    #endif
 #else
     #include <string>
     typedef std::string ui18nstring;
 #endif
 
-#ifdef UI18N_CUSTOM_MAP
-    #ifdef UI18N_CUSTOM_MAP_INCLUDE
-		#include UI18N_CUSTOM_MAP_INCLUDE
-        template<typename T, typename T2>
-        using ui18nmap = UI18N_CUSTOM_MAP<T, T2>;
+template<typename K, typename V>
+using ui18nmap = phmap::parallel_flat_hash_map<K, V>;
 
-	#else
-		#error UI18N_CUSTOM_MAP defined but UI18N_CUSTOM_MAP_INCLUDE not defined, it is needed to include the necessary headers for the string, and should contain the name of the header wrapped in ""
-	#endif
-#else
-    #include <unordered_map>
-    template<typename T, typename T2>
-    using ui18nmap = std::unordered_map<T, T2>;
-#endif
-
-    namespace YAML
-    {
-        class Node;
-    }
+namespace YAML
+{
+    class Node;
+}
 
 namespace UI18N
 {

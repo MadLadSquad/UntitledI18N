@@ -27,8 +27,9 @@ else()
 endif()
 
 set(UI18N_HEADERS "UI18N.hpp" "Common.h")
+file(GLOB_RECURSE HASH_MAP "parallel-hashmap/*.h")
 
-add_library(UntitledI18N ${UI18N_LIBRARY_TYPE} ${UI18N_HEADERS} "C/cui18n.h" "C/cui18n.cpp" "UI18N.cpp")
+add_library(UntitledI18N ${UI18N_LIBRARY_TYPE} ${UI18N_HEADERS} "C/cui18n.h" "C/cui18n.cpp" "UI18N.cpp" ${HASH_MAP})
 
 target_compile_definitions(UntitledI18N PRIVATE "UVK_LOG_EXPORT_FROM_LIBRARY" "UVK_LIB_COMPILE")
 target_compile_definitions(UntitledI18N PUBLIC UIMGUI_I18N_MODULE_ENABLED)
@@ -43,6 +44,7 @@ if (UIMGUI_INSTALL)
             LIBRARY DESTINATION lib/
             ARCHIVE DESTINATION lib/)
     install(FILES ${UI18N_HEADERS} DESTINATION include/UntitledI18N)
+    install(FILES ${HASH_MAP} DESTINATION include/UntitledI18N/parallel-hashmap/parallel_hashmap)
     install(FILES "C/cui18n.h" DESTINATION include/UntitledI18N/C)
     install(FILES ${PROJECT_BINARY_DIR}/UntitledI18N.pc
             DESTINATION lib/pkgconfig/)

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(UntitledI18N VERSION 1.0.0.0)
+project(UntitledI18N VERSION 1.3.0.1)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_C_STANDARD 99)
@@ -41,8 +41,8 @@ configure_file(UntitledI18N.pc.in UntitledI18N.pc @ONLY)
 
 if (UIMGUI_INSTALL)
     install(TARGETS UntitledI18N
-            LIBRARY DESTINATION lib/
-            ARCHIVE DESTINATION lib/)
+            LIBRARY DESTINATION lib64/
+            ARCHIVE DESTINATION lib64/)
     install(FILES ${UI18N_HEADERS} DESTINATION include/UntitledI18N)
     install(FILES ${HASH_MAP} DESTINATION include/UntitledI18N/parallel-hashmap/parallel_hashmap)
     install(FILES "C/cui18n.h" DESTINATION include/UntitledI18N/C)

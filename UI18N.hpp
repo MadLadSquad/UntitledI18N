@@ -30,11 +30,14 @@ namespace UI18N
     typedef UI18N_InitialisationResult InitialisationResult;
 
     // Returns an empty string if out of bounds
+    // UntitledImGuiFramework Event Safety - Any time
     UVK_PUBLIC_API const char* languageCodeToString(LanguageCodes code) noexcept;
 
     // Returns UI18N_LANGUAGE_CODES_COUNT if it does not fit
+    // UntitledImGuiFramework Event Safety - Any time
     UVK_PUBLIC_API LanguageCodes stringToLanguageCode(const char* code) noexcept;
 
+    // UntitledImGuiFramework Event Safety - Any time
     class UVK_PUBLIC_API TranslationEngine
     {
     public:

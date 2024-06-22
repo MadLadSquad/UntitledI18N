@@ -61,7 +61,7 @@ namespace UI18N
     };
 }
 
-UI18N::InitialisationResult UI18N::TranslationEngine::init(const char* directory, LanguageCodes defaultLocale) noexcept
+UI18N::InitialisationResult UI18N::TranslationEngine::init(const char* directory, const LanguageCodes defaultLocale) noexcept
 {
     currentLocale = defaultLocale;
 
@@ -79,25 +79,22 @@ UI18N::InitialisationResult UI18N::TranslationEngine::init(const char* directory
             auto filename = a.path().filename().string();
             for (size_t i = 0; i < UI18N_LANGUAGE_CODES_COUNT; i++)
             {
-                auto& lc = LanguageCodesAsStrings[i];
+                const auto& lc = LanguageCodesAsStrings[i];
                 if (filename == (lc + ymlExt) || filename == (lc + ymlExtShort))
                 {
                     if (parseTranslations(absolute(a.path()).string().c_str(), i) == UI18N_INIT_RESULT_INVALID_TRANSLATION)
                         result = UI18N_INIT_RESULT_INVALID_TRANSLATION;
                     goto exit_inner_loop;
                 }
-                else
+                auto tmp = filename;
+                for (auto& f : tmp)
+                    if (f == '-')
+                        f = '_';
+                if (tmp == (lc + ymlExt) || filename == (lc + ymlExtShort))
                 {
-                    auto tmp = filename;
-                    for (auto& f : tmp)
-                        if (f == '-')
-                            f = '_';
-                    if (tmp == (lc + ymlExt) || filename == (lc + ymlExtShort))
-                    {
-                        if (parseTranslations(absolute(a.path()).string().c_str(), i) == UI18N_INIT_RESULT_INVALID_TRANSLATION)
-                            result = UI18N_INIT_RESULT_INVALID_TRANSLATION;
-                        goto exit_inner_loop;
-                    }
+                    if (parseTranslations(absolute(a.path()).string().c_str(), i) == UI18N_INIT_RESULT_INVALID_TRANSLATION)
+                        result = UI18N_INIT_RESULT_INVALID_TRANSLATION;
+                    goto exit_inner_loop;
                 }
             }
         }
@@ -107,7 +104,7 @@ exit_inner_loop:;
     // Record the locales that have at least 1 translation
     for (size_t i = 0; i < UI18N_LANGUAGE_CODES_COUNT; i++)
         if (!translations[i].empty())
-            existingLocales.push_back((LanguageCodes)i);
+            existingLocales.push_back(static_cast<LanguageCodes>(i));
 
     return result;
 }
@@ -155,20 +152,17 @@ UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const ch
             // Handle variable references
             for (size_t i = 0; i < variable.text.size(); i++)
             {
-                auto& it = variable.text[i];
+                const auto& it = variable.text[i];
                 if ((i + 1) != variable.text.size())
                 {
-                    auto& nit = variable.text[i + 1];
+                    const auto& nit = variable.text[i + 1];
                     if (it == '{')
                     {
                         if (nit == '}')
                             goto exit_next_it;
-                        else
-                        {
-                            bIteratingVariable = true;
-                            // Got to the next character position
-                            beginCut = i + 1;
-                        }
+                        bIteratingVariable = true;
+                        // Got to the next character position
+                        beginCut = i + 1;
                     }
                 }
 
@@ -181,9 +175,9 @@ exit_next_it:;
             }
 
             // Handle terms
-            for (auto& f : variable.references)
+            for (const auto& f : variable.references)
             {
-                for (auto& h : terms)
+                for (const auto& h : terms)
                 {
                     if (f.first == h.first)
                     {
@@ -197,7 +191,7 @@ exit_inner_loop_init_2:;
             if (a["switch"])
                 parseVariablePatternMatching(a["switch"], variable);
 
-            translations[lc].insert(std::pair<ui18nstring, Variable>{ a["id"].as<ui18nstring>(), variable });
+            translations[lc].insert(std::pair{ a["id"].as<ui18nstring>(), variable });
         }
     }
 
@@ -219,7 +213,7 @@ void UI18N::TranslationEngine::parseVariablePatternMatching(const YAML::Node& no
         if (f["default"])
             defaultVal = f["default"].as<ui18nstring>();
         // Replace terms in the default string
-        for (auto& a : terms)
+        for (const auto& a : terms)
             replaceVariableInString(defaultVal, a.first, a.second);
 
         vswitch.defaultValue = defaultVal;
@@ -235,10 +229,10 @@ void UI18N::TranslationEngine::parseVariablePatternMatching(const YAML::Node& no
 
                 result = h["result"].as<ui18nstring>();
                 // Replace terms in the result string
-                for (auto& a : terms)
+                for (const auto& a : terms)
                     replaceVariableInString(result, a.first, a.second);
 
-                vswitch.patterns.insert(std::pair<ui18nstring, ui18nstring>{ h["case"].as<ui18nstring>(), result });
+                vswitch.patterns.insert(std::pair{ h["case"].as<ui18nstring>(), result });
 pattern_match_skip_inner:;
             }
         }
@@ -257,23 +251,23 @@ UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const char* di
         return UI18N_INIT_RESULT_INVALID_CONFIG;
     }
 
-    auto terms_l = out["terms"];
+    const auto terms_l = out["terms"];
 
     // Wow, this is inefficient as shit
     if (terms_l)
         for (auto& a : terms_l.as<std::vector<ui18nmap<ui18nstring, ui18nstring>>>())
-            for (auto& f : a)
-                terms.insert(std::pair<ui18nstring, ui18nstring>{ f.first, f.second });
+            for (const auto& f : a)
+                terms.insert(std::pair{ f.first, f.second });
 
     return UI18N_INIT_RESULT_SUCCESS;
 }
 
 void UI18N::TranslationEngine::pushVariable(const ui18nstring& name, const ui18nstring& val) noexcept
 {
-    variables.insert(std::pair<ui18nstring, ui18nstring>{ name, val });
+    variables.insert(std::pair{ name, val });
 }
 
-const char* UI18N::languageCodeToString(LanguageCodes code) noexcept
+const char* UI18N::languageCodeToString(const LanguageCodes code) noexcept
 {
     if (code >= UI18N_LANGUAGE_CODES_COUNT)
         return "";
@@ -287,25 +281,23 @@ UI18N::LanguageCodes UI18N::stringToLanguageCode(const char* code) noexcept
     for (size_t i = 0; i < UI18N_LANGUAGE_CODES_COUNT; i++)
     {
         ui18nstring tmp = toLower(code);
-        ui18nstring languageCode = toLower(LanguageCodesAsStrings[i]);
+        const ui18nstring languageCode = toLower(LanguageCodesAsStrings[i]);
 
         if (tmp == languageCode)
             return static_cast<LanguageCodes>(i);
-        else
-        {
-            for (auto& a : tmp)
-                if (a == '-')
-                    a = '_';
-            if (tmp == languageCode)
-                return static_cast<LanguageCodes>(i);
-        }
+
+        for (auto& a : tmp)
+            if (a == '-')
+                a = '_';
+        if (tmp == languageCode)
+            return static_cast<LanguageCodes>(i);
     }
     return UI18N_LANGUAGE_CODES_COUNT;
 }
 
 void UI18N::TranslationEngine::replaceVariableInString(ui18nstring& str, const ui18nstring& replaceName, const ui18nstring& replace) noexcept
 {
-    ui18nstring pattern = "{" + replaceName + "}";
+    const ui18nstring pattern = "{" + replaceName + "}";
     for (size_t offset = str.find(pattern); offset != ui18nstring::npos; offset = str.find(pattern, offset))
         str.replace(offset, pattern.size(), replace);
 }
@@ -315,7 +307,7 @@ void UI18N::TranslationEngine::getHandlePositionalArguments(ui18nstring& text, c
     size_t ppos = 0;
     for (const auto& f : args)
     {
-        auto pos = text.find("{}", ppos);
+        const auto pos = text.find("{}", ppos);
         ppos = pos;
         if (pos == ui18nstring::npos)
             break;
@@ -358,17 +350,17 @@ void UI18N::TranslationEngine::getHandleReplaceWithVal(const Switch& switchA, ui
     if (switchA.bExists)
     {
         // Iterate patterns
-        for (auto& a : switchA.patterns)
+        for (const auto& a : switchA.patterns)
         {
             // If the case key is equal to the value of the variable
             if (a.first == variable.second)
             {
                 auto resultTmp = a.second;
                 // Replace any variables that may be templated into the result key
-                for (auto& f : variables)
+                for (const auto& f : variables)
                     replaceVariableInString(resultTmp, f.first, f.second);
                 // Also from the temporary variable list if provided
-                for (auto& f : args)
+                for (const auto& f : args)
                     replaceVariableInString(resultTmp, f.first, f.second);
 
                 replaceVariableInString(text, variable.first, resultTmp);
@@ -377,10 +369,10 @@ void UI18N::TranslationEngine::getHandleReplaceWithVal(const Switch& switchA, ui
         }
         // Replace any variables in the default variable
         auto defaultValTmp = switchA.defaultValue;
-        for (auto& a : variables)
+        for (const auto& a : variables)
             replaceVariableInString(defaultValTmp, a.first, a.second);
         // Also from the temporary variable list if provided
-        for (auto& a : args)
+        for (const auto& a : args)
             replaceVariableInString(defaultValTmp, a.first, a.second);
 
         // Finally replace everything in the default value
@@ -390,7 +382,7 @@ void UI18N::TranslationEngine::getHandleReplaceWithVal(const Switch& switchA, ui
         replaceVariableInString(text, variable.first, variable.second);
 }
 
-void UI18N::TranslationEngine::setCurrentLocale(UI18N::LanguageCodes locale) noexcept
+void UI18N::TranslationEngine::setCurrentLocale(const LanguageCodes locale) noexcept
 {
     currentLocale = locale;
 }
@@ -404,6 +396,6 @@ ui18nstring toLower(const ui18nstring& arg) noexcept
 {
     ui18nstring tmp = arg;
     for (auto& a : tmp)
-        a = (char)tolower(a);
+        a = static_cast<char>(tolower(a));
     return tmp;
 }

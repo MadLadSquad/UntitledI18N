@@ -15,7 +15,7 @@ namespace UI18N
     };
 }
 
-const char* UI18N_languageCodeToString(UI18N_LanguageCodes code)
+const char* UI18N_languageCodeToString(const UI18N_LanguageCodes code)
 {
     return UI18N::languageCodeToString(code);
 }
@@ -35,12 +35,12 @@ void UI18N_TranslationEngine_Free(UI18N_CTranslationEngine* engine)
     delete (UI18N::TranslationEngine*)engine;
 }
 
-UI18N_InitialisationResult UI18N_TranslationEngine_init(UI18N_CTranslationEngine* engine, const char* directory, UI18N_LanguageCodes defaultLocale)
+UI18N_InitialisationResult UI18N_TranslationEngine_init(UI18N_CTranslationEngine* engine, const char* directory, const UI18N_LanguageCodes defaultLocale)
 {
     return cast(engine)->init(directory, defaultLocale);
 }
 
-const char* UI18N_TranslationEngine_get(UI18N_CTranslationEngine* engine, const char* id, char** pargv, size_t pargc, UI18N_Pair* argv, size_t argc)
+const char* UI18N_TranslationEngine_get(UI18N_CTranslationEngine* engine, const char* id, char** pargv, const size_t pargc, UI18N_Pair* argv, const size_t argc)
 {
     ui18nmap<ui18nstring, ui18nstring> map;
     std::vector<ui18nstring> vec;
@@ -62,7 +62,7 @@ void UI18N_TranslationEngine_pushVariable(UI18N_CTranslationEngine* engine, cons
     cast(engine)->pushVariable(name, val);
 }
 
-void UI18N_TranslationEngine_setCurrentLocale(UI18N_CTranslationEngine* engine, UI18N_LanguageCodes locale)
+void UI18N_TranslationEngine_setCurrentLocale(UI18N_CTranslationEngine* engine, const UI18N_LanguageCodes locale)
 {
     cast(engine)->setCurrentLocale(locale);
 }

@@ -31,7 +31,7 @@ file(GLOB_RECURSE HASH_MAP "parallel-hashmap/*.h")
 
 add_library(UntitledI18N ${UI18N_LIBRARY_TYPE} ${UI18N_HEADERS} "C/cui18n.h" "C/cui18n.cpp" "UI18N.cpp" ${HASH_MAP})
 
-target_compile_definitions(UntitledI18N PRIVATE "UVK_LOG_EXPORT_FROM_LIBRARY" "UVK_LIB_COMPILE")
+target_compile_definitions(UntitledI18N PRIVATE "MLS_EXPORT_LIBRARY" "MLS_LIB_COMPILE")
 target_compile_definitions(UntitledI18N PUBLIC UIMGUI_I18N_MODULE_ENABLED)
 list(APPEND compile_defs "UIMGUI_I18N_MODULE_ENABLED")
 

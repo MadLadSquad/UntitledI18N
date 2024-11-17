@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(UntitledI18N VERSION 1.3.0.1)
+project(UntitledI18N VERSION v1.5.0.0)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_C_STANDARD 99)

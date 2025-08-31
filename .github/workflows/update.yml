@@ -40,8 +40,8 @@ jobs:
           git config --global user.email "contact@madladsquad.com"
           git fetch --all
           git checkout auto || git checkout -b auto
-          git submodule foreach --recursive "git reset --hard origin/\`git symbolic-ref refs/remotes/origin/HEAD | cut -f4 -d/\`"
           o=$(git submodule update --remote --merge)
+          git submodule foreach --recursive "git reset --hard origin/\`git symbolic-ref refs/remotes/origin/HEAD | cut -f4 -d/\`"
           echo "out=${o:0:1}?" >> $GITHUB_OUTPUT
       - name: Commit
         if: "steps.mod.outputs.out != '?'"

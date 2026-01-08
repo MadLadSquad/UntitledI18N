@@ -1,34 +1,8 @@
 #include "UI18N.hpp"
-#include <yaml-cpp/yaml.h>
 #include <filesystem>
-
-namespace YAML
-{
-    template <typename K, typename V>
-    struct convert<phmap::parallel_flat_hash_map<K, V>> {
-        static Node encode(const phmap::flat_hash_map<K, V>& rhs) {
-            Node node(NodeType::Map);
-            for (const auto& element : rhs)
-                node.force_insert(element.first, element.second);
-            return node;
-        }
-
-        static bool decode(const Node& node, phmap::parallel_flat_hash_map<K, V>& rhs) {
-            if (!node.IsMap())
-                return false;
-
-            rhs.clear();
-            for (const auto& element : node)
-#if defined(__GNUC__) && __GNUC__ < 4
-                // workaround for GCC 3:
-                    rhs[element.first.template as<K>()] = element.second.template as<V>();
-#else
-                rhs[element.first.as<K>()] = element.second.as<V>();
-#endif
-            return true;
-        }
-    };
-}
+#include <fstream>
+#include <ryml.hpp>
+#include <ryml_std.hpp>
 
 namespace UI18N
 {
@@ -59,6 +33,28 @@ namespace UI18N
         "uk_UA","unm_US","ur_IN","ur_PK","uz_UZ","ve_ZA","vi_VN","wa_BE","wae_CH","wal_ET","wo_SN","xh_ZA","yi_US",
         "yo_NG","yue_HK","yuw_PG","zh_CN","zh_HK","zh_SG","zh_TW","zu_ZA"
     };
+}
+
+static ui18nstring loadFileToString(const ui18nstring& file) noexcept
+{
+    std::ifstream in(file);
+
+    in.seekg(0, std::ios::end);
+    const size_t size = in.tellg();
+    if (size == -1)
+        return "";
+
+    std::string buffer(size, ' ');
+
+    in.seekg(0);
+    in.read(buffer.data(), static_cast<std::streamsize>(size));
+    in.close();
+    return buffer;
+}
+
+static bool keyValid(const ryml::NodeRef ref) noexcept
+{
+    return !ref.invalid() && ref.readable() && !ref.empty();
 }
 
 UI18N::InitialisationResult UI18N::TranslationEngine::init(const char* directory, const LanguageCodes defaultLocale) noexcept
@@ -128,24 +124,30 @@ ui18nstring UI18N::TranslationEngine::get(const char* id, const std::vector<ui18
 
 UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const char* file, size_t lc)
 {
-    YAML::Node out;
-    try
-    {
-        out = YAML::LoadFile(file);
-    }
-    catch (YAML::BadFile&)
-    {
-        return UI18N_INIT_RESULT_INVALID_TRANSLATION;
-    }
-
-    if (!out["translations"])
+    const auto string = loadFileToString(file);
+    if (string.empty())
         return UI18N_INIT_RESULT_INVALID_TRANSLATION;
 
-    for (const auto& a : out["translations"])
+    auto tree = ryml::parse_in_arena(string.c_str());
+    if (tree.empty())
+        return UI18N_INIT_RESULT_INVALID_TRANSLATION;
+
+    auto root = tree.rootref();
+
+    auto trs = root["translations"];
+    if (!keyValid(trs) || !trs.is_seq())
+        return UI18N_INIT_RESULT_INVALID_TRANSLATION;
+
+    for (auto a : trs.children())
     {
-        if (a["id"] && a["text"])
+        auto id = a["id"];
+        auto text = a["text"];
+
+        if (keyValid(text) && keyValid(id))
         {
-            Variable variable = { .text = a["text"].as<ui18nstring>(), .references = {} };
+            Variable variable = { .text = {}, .references = {} };
+            text >> variable.text;
+
             bool bIteratingVariable = false;
             size_t beginCut = 0;
 
@@ -188,51 +190,65 @@ exit_next_it:;
 exit_inner_loop_init_2:;
             }
 
-            if (a["switch"])
-                parseVariablePatternMatching(a["switch"], variable);
+            auto sw = a["switch"];
+            if (keyValid(sw) && sw.is_seq())
+                parseVariablePatternMatching(sw, variable);
 
-            translations[lc].insert(std::pair{ a["id"].as<ui18nstring>(), variable });
+            ui18nstring idstr{};
+            id >> idstr;
+
+            translations[lc].insert(std::pair{ idstr, variable });
         }
     }
 
     return UI18N_INIT_RESULT_SUCCESS;
 }
 
-void UI18N::TranslationEngine::parseVariablePatternMatching(const YAML::Node& node, Variable& variable) noexcept
+void UI18N::TranslationEngine::parseVariablePatternMatching(ryml::NodeRef node, Variable& variable) noexcept
 {
-    for (auto& f : node)
+    for (auto f : node.children())
     {
         auto var = f["var"];
-        if (!var)
+        if (!keyValid(var))
             continue;
 
-        const auto variableString = var.as<ui18nstring>();
-        Switch& vswitch = variable.references[variableString];
+        ui18nstring variableString{};
+        var >> variableString;
 
-        ui18nstring defaultVal;
-        if (f["default"])
-            defaultVal = f["default"].as<ui18nstring>();
+        ui18nstring defaultVal{};
+        auto defaultNode = f["default"];
+        if (keyValid(defaultNode))
+            defaultNode >> defaultVal;
+
         // Replace terms in the default string
         for (const auto& a : terms)
             replaceVariableInString(defaultVal, a.first, a.second);
 
+        Switch& vswitch = variable.references[variableString];
         vswitch.defaultValue = defaultVal;
         vswitch.bExists = true;
 
-        if (f["cases"])
+        auto cases = f["cases"];
+        if (keyValid(cases) && cases.is_seq())
         {
-            for (auto& h : f["cases"])
+            for (auto h : f["cases"].children())
             {
-                ui18nstring result;
-                if (!h["case"] || !h["result"])
+                ui18nstring result{};
+                ui18nstring caseStr{};
+
+                auto cc = h["case"];
+                auto cr = h["result"];
+                if (!keyValid(cc) || !keyValid(cr))
                     goto pattern_match_skip_inner;
 
-                result = h["result"].as<ui18nstring>();
+                cc >> caseStr;
+                cr >> result;
+
                 // Replace terms in the result string
                 for (const auto& a : terms)
                     replaceVariableInString(result, a.first, a.second);
 
-                vswitch.patterns.insert(std::pair{ h["case"].as<ui18nstring>(), result });
+                vswitch.patterns.insert(std::pair{ caseStr, result });
 pattern_match_skip_inner:;
             }
         }
@@ -241,24 +257,34 @@ pattern_match_skip_inner:;
 
 UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const char* directory)
 {
-    YAML::Node out;
-    try
-    {
-        out = YAML::LoadFile(ui18nstring(directory) + "/ui18n-config.yaml");
-    }
-    catch (YAML::BadFile&)
-    {
+    const auto string = loadFileToString(ui18nstring(directory) + "/ui18n-config.yaml");
+    if (string.empty())
         return UI18N_INIT_RESULT_INVALID_CONFIG;
-    }
 
-    const auto terms_l = out["terms"];
+    auto tree = ryml::parse_in_arena(string.c_str());
+    if (tree.empty())
+        return UI18N_INIT_RESULT_INVALID_CONFIG;
 
+    auto root = tree.rootref();
+
+    auto terms_l = root["terms"];
     // Wow, this is inefficient as shit
-    if (terms_l)
-        for (auto& a : terms_l.as<std::vector<ui18nmap<ui18nstring, ui18nstring>>>())
-            for (const auto& f : a)
-                terms.insert(std::pair{ f.first, f.second });
+    if (keyValid(terms_l) && terms_l.is_seq())
+    {
+        for (auto a : terms_l.children())
+        {
+            ui18nstring key{};
+            ui18nstring val{};
 
+            auto len = a.key().len;
+            key.resize(len);
+            memcpy(key.data(), a.key().data(), len);
+
+            a >> val;
+
+            terms.insert(std::pair{ key, val });
+        }
+    }
     return UI18N_INIT_RESULT_SUCCESS;
 }
 

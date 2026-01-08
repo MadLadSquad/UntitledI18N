@@ -3,6 +3,7 @@
 #include "parallel-hashmap/parallel_hashmap/phmap.h"
 #include <array>
 #include <vector>
+#include <ryml.hpp>
 
 #ifdef UI18N_CUSTOM_STRING
     #ifdef UI18N_CUSTOM_STRING_INCLUDE
@@ -18,11 +19,6 @@
 
 template<typename K, typename V>
 using ui18nmap = phmap::parallel_flat_hash_map<K, V>;
-
-namespace YAML
-{
-    class Node;
-}
 
 namespace UI18N
 {
@@ -74,7 +70,7 @@ namespace UI18N
 
         InitialisationResult parseConfig(const char* directory);
         InitialisationResult parseTranslations(const char* file, size_t lc);
-        void parseVariablePatternMatching(const YAML::Node& node, Variable& variable) noexcept;
+        void parseVariablePatternMatching(ryml::NodeRef node, Variable& variable) noexcept;
 
         static void getHandlePositionalArguments(ui18nstring& text, const std::vector<ui18nstring>& args) noexcept;
         void getHandleVariables(ui18nstring& text, const ui18nmap<ui18nstring, Switch>& references, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept;

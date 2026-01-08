@@ -12,18 +12,10 @@ if (BUILD_VARIANT_STATIC)
     set(UI18N_LIBRARY_TYPE "STATIC")
 endif()
 
-if (BUILD_VARIANT_VENDOR OR WIN32)
-    if (USE_PRECONFIGURED_YAML)
-        include_directories(${YAML_CPP_INCLUDE_DIRS_T})
-    else ()
-        add_subdirectory(yaml-cpp)
-        include_directories("yaml-cpp/include/yaml-cpp" "yaml-cpp/include")
-    endif()
+if (USE_PRECONFIGURED_YAML)
+    include_directories(${RYML_INCLUDE_DIRS_T})
 else()
-    set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
-    include(FindYamlCpp)
-    find_package(YamlCpp REQUIRED)
-    include_directories(${YamlCpp_INCLUDE_PATH})
+    add_subdirectory(rapidyaml)
 endif()
 
 set(UI18N_HEADERS "UI18N.hpp" "Common.h")
@@ -35,7 +27,10 @@ target_compile_definitions(UntitledI18N PRIVATE "MLS_EXPORT_LIBRARY" "MLS_LIB_CO
 target_compile_definitions(UntitledI18N PUBLIC UIMGUI_I18N_MODULE_ENABLED)
 list(APPEND compile_defs "UIMGUI_I18N_MODULE_ENABLED")
 
-target_link_libraries(UntitledI18N yaml-cpp)
+if (NOT USE_PRECONFIGURED_YAML)
+    set_target_properties(ryml PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+target_link_libraries(UntitledI18N PRIVATE ryml)
 
 configure_file(UntitledI18N.pc.in UntitledI18N.pc @ONLY)
 

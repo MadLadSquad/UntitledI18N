@@ -37,7 +37,7 @@ jobs:
           git config --global user.name "Madman10K"
           git config --global user.email "contact@madladsquad.com"
           git fetch --all
-          git submodule update --remote --merge --init --recursive
+          git submodule update --remote --init --recursive
           ver="${{ github.ref_name }}"
           echo "out=untitled-i18n-${ver:1}" >> $GITHUB_OUTPUT
           sed -i "s/project(UntitledI18N.*/project(UntitledI18N VERSION ${ver:1})/g" CMakeLists.txt

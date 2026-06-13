@@ -255,6 +255,77 @@ pattern_match_skip_inner:;
     }
 }
 
+namespace c4::yml
+{
+    static bool keyValid(ConstNodeRef ref) noexcept
+    {
+        return !ref.invalid() && ref.readable() && !ref.empty();
+    }
+
+    template<>
+    bool read<ui18nstring>(ConstNodeRef const& ref, ui18nstring* t)
+    {
+        const auto val = ref.val();
+        t->resize(val.len);
+        memcpy(t->data(), val.data(), val.size());
+        return true;
+    }
+
+    // Check if similar to std::string
+    template<typename T>
+    concept IsStringLike = requires(T s, std::size_t n)
+    {
+        typename T::value_type;
+
+        { s.data() } -> std::same_as<typename T::value_type*>;
+        { std::as_const(s).data() } -> std::same_as<const typename T::value_type*>;
+        { s.resize(n) } -> std::same_as<void>;
+    } && std::is_trivial_v<typename T::value_type>;
+
+    template<template<typename, typename> class C, typename Key, typename Val>
+    bool read_dict(ConstNodeRef const& ref, C<Key, Val>* t)
+    {
+        if (!keyValid(ref) || !ref.is_seq())
+            return false;
+
+        for (const auto& a : ref.children())
+        {
+            if (!a.is_map())
+                continue;
+
+            // Each sequence element is a single-pair map ('- key: value'), so descend into its
+            // key/value pair instead of reading the keyless seq element itself.
+            for (const auto& entry : a.children())
+            {
+                auto k = entry.key();
+
+                Key key{};
+                if constexpr (IsStringLike<Key>)
+                {
+                    key.resize(k.len);
+                    memcpy(key.data(), k.data(), k.len);
+                }
+                else
+                    key = k.str;
+
+                Val val{};
+                entry >> val;
+
+                t->insert({key, val});
+            }
+        }
+
+        return true;
+    }
+
+    template<typename Key, typename Val>
+    static bool read(ConstNodeRef const& ref, ui18nmap<Key, Val>* t)
+    {
+        return read_dict(ref, t);
+    }
+}
+
+
 UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const char* directory)
 {
     const auto string = loadFileToString(ui18nstring(directory) + "/ui18n-config.yaml");
@@ -268,23 +339,8 @@ UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const char* di
     auto root = tree.rootref();
 
     auto terms_l = root["terms"];
-    // Wow, this is inefficient as shit
-    if (keyValid(terms_l) && terms_l.is_seq())
-    {
-        for (auto a : terms_l.children())
-        {
-            ui18nstring key{};
-            ui18nstring val{};
-
-            auto len = a.key().len;
-            key.resize(len);
-            memcpy(key.data(), a.key().data(), len);
-
-            a >> val;
-
-            terms.insert(std::pair{ key, val });
-        }
-    }
+    if (keyValid(terms_l))
+        terms_l >> terms;
     return UI18N_INIT_RESULT_SUCCESS;
 }
 

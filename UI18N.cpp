@@ -282,9 +282,15 @@ namespace c4::yml
         { s.resize(n) } -> std::same_as<void>;
     } && std::is_trivial_v<typename T::value_type>;
 
-    template<template<typename, typename> class C, typename Key, typename Val>
-    bool read_dict(ConstNodeRef const& ref, C<Key, Val>* t)
+    // Takes the container type directly instead of a template-template parameter: map types such as
+    // phmap::parallel_flat_hash_map mix type and non-type (size_t N) template parameters, which no
+    // template-template form can match portably across GCC/Clang/MSVC. Key/Val come from the typedefs.
+    template<typename C>
+    bool read_dict(ConstNodeRef const& ref, C* t)
     {
+        using Key = typename C::key_type;
+        using Val = typename C::mapped_type;
+
         if (!keyValid(ref) || !ref.is_seq())
             return false;
 

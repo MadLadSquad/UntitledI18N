@@ -146,7 +146,7 @@ UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const ch
         if (keyValid(text) && keyValid(id))
         {
             Variable variable = { .text = {}, .references = {} };
-            text >> variable.text;
+            text.load(&variable.text);
 
             bool bIteratingVariable = false;
             size_t beginCut = 0;
@@ -195,7 +195,7 @@ exit_inner_loop_init_2:;
                 parseVariablePatternMatching(sw, variable);
 
             ui18nstring idstr{};
-            id >> idstr;
+            id.load(&idstr);
 
             translations[lc].insert(std::pair{ idstr, variable });
         }
@@ -213,12 +213,12 @@ void UI18N::TranslationEngine::parseVariablePatternMatching(ryml::NodeRef node, 
             continue;
 
         ui18nstring variableString{};
-        var >> variableString;
+        var.load(&variableString);
 
         ui18nstring defaultVal{};
         auto defaultNode = f["default"];
         if (keyValid(defaultNode))
-            defaultNode >> defaultVal;
+            defaultNode.load(&defaultVal);
 
         // Replace terms in the default string
         for (const auto& a : terms)
@@ -241,8 +241,8 @@ void UI18N::TranslationEngine::parseVariablePatternMatching(ryml::NodeRef node, 
                 if (!keyValid(cc) || !keyValid(cr))
                     goto pattern_match_skip_inner;
 
-                cc >> caseStr;
-                cr >> result;
+                cc.load(&caseStr);
+                cr.load(&result);
 
                 // Replace terms in the result string
                 for (const auto& a : terms)
@@ -262,8 +262,11 @@ namespace c4::yml
         return !ref.invalid() && ref.readable() && !ref.empty();
     }
 
-    template<>
-    bool read<ui18nstring>(ConstNodeRef const& ref, ui18nstring* t)
+    // Provided as a plain (internal-linkage) overload rather than an explicit specialisation: since the
+    // rapidyaml ReadResult update the primary read() template returns ReadResult, so a bool result is now
+    // routed through ReadResult's legacy adapter constructor. static keeps the symbol local to this TU,
+    // avoiding a clash with the framework's own read(std::string*) when i18n is compiled into it.
+    static bool read(ConstNodeRef const& ref, ui18nstring* t)
     {
         const auto val = ref.val();
         t->resize(val.len);
@@ -315,7 +318,7 @@ namespace c4::yml
                     key = k.str;
 
                 Val val{};
-                entry >> val;
+                entry.load(&val);
 
                 t->insert({key, val});
             }
@@ -346,7 +349,7 @@ UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const char* di
 
     auto terms_l = root["terms"];
     if (keyValid(terms_l))
-        terms_l >> terms;
+        terms_l.load(&terms);
     return UI18N_INIT_RESULT_SUCCESS;
 }
 

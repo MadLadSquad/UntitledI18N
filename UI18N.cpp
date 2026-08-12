@@ -1,6 +1,7 @@
 #include "UI18N.hpp"
 #include <filesystem>
 #include <fstream>
+#include <string_view>
 #include <ryml.hpp>
 #include <ryml_std.hpp>
 
@@ -20,7 +21,7 @@ namespace UI18N
         "es_NI","es_PA","es_PE","es_PR","es_PY","es_SV","es_US","es_UY","es_VE","et_EE","eu_ES","fa_IR","ff_SN","fi_FI",
         "fil_PH","fo_FO","fr_BE","fr_CA","fr_CH","fr_FR","fr_LU","fur_IT","fy_DE","fy_NL","ga_IE","gd_GB","gez_ER",
         "gez_ET","gl_ES","gu_IN","gv_GB","ha_NG","hak_TW","he_IL","hi_IN","hif_FJ","hne_IN","hr_HR","hsb_DE","ht_HT",
-        "hu_HU","hy_AM","ia_FR","id_ID","ig_NG","ik_CA","is_IS","it_CH","it_IT","iu_CA", "jp_JP", "ka_GE","kab_DZ","kk_KZ",
+        "hu_HU","hy_AM","ia_FR","id_ID","ig_NG","ik_CA","is_IS","it_CH","it_IT","iu_CA","ja_JP","ka_GE","kab_DZ","kk_KZ",
         "kl_GL","km_KH","kn_IN","kok_IN","ks_IN","ku_TR","kw_GB","ky_KG","lb_LU","lg_UG","li_BE","li_NL","lij_IT",
         "ln_CD","lo_LA","lt_LT","lv_LV","lzh_TW","mag_IN","mai_IN","mai_NP","mfe_MU","mg_MG","mhr_RU","mi_NZ","miq_NI",
         "mjw_IN","mk_MK","ml_IN","mn_MN","mni_IN","mnw_MM","mr_IN","ms_MY","mt_MT","my_MM","nan_TW","nb_NO","nds_DE",
@@ -35,24 +36,78 @@ namespace UI18N
     };
 }
 
-static ui18nstring loadFileToString(const ui18nstring& file) noexcept
+// Deliberately not std::tolower: everything folded here is pure ASCII, whereas tolower() is undefined for negative
+// (that is, non-ASCII UTF-8) bytes and answers to whatever LC_CTYPE the host program happens to have set
+static char asciiToLower(const char c) noexcept
 {
-    std::ifstream in(file);
-
-    in.seekg(0, std::ios::end);
-    const size_t size = in.tellg();
-    if (size == -1)
-        return "";
-
-    std::string buffer(size, ' ');
-
-    in.seekg(0);
-    in.read(buffer.data(), static_cast<std::streamsize>(size));
-    in.close();
-    return buffer;
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
 }
 
-static bool keyValid(const ryml::NodeRef ref) noexcept
+// Matches a file extension the same way the language code in front of it is matched: without regard to case. A
+// file name belongs to whoever wrote it, and "en_GB.YAML" names the locale that "en_GB.yaml" does - on Windows and
+// macOS it may even be the same file
+static bool endsWithNoCase(const ui18nstring& str, const std::string_view suffix) noexcept
+{
+    if (str.size() < suffix.size())
+        return false;
+
+    const size_t offset = str.size() - suffix.size();
+    for (size_t i = 0; i < suffix.size(); i++)
+        if (asciiToLower(str[offset + i]) != asciiToLower(suffix[i]))
+            return false;
+    return true;
+}
+
+// Returns false only when the file cannot be opened at all, so that a missing or unreadable file stays
+// distinguishable from one that is merely empty - an empty config is legal, a missing one is not
+static bool loadFileToString(const std::filesystem::path& file, ui18nstring& out) noexcept
+{
+    out.clear();
+
+    // Binary mode is required, not cosmetic: in text mode Windows collapses every CRLF to a single character, so
+    // fewer characters are read than tellg() reported and the tail of the buffer would keep its padding
+    // Streams signal failure through their state, never by throwing, as long as no exception mask is set on them
+    std::ifstream in(file, std::ios::binary);
+    if (!in.is_open())
+        return false;
+
+    in.seekg(0, std::ios::end);
+    const std::streamoff size = in.tellg();
+    if (size <= 0)
+        return true;
+
+    out.resize(static_cast<size_t>(size));
+
+    in.seekg(0);
+    in.read(out.data(), size);
+    // Trust what was actually read over what was reported, so a short read truncates instead of leaving junk
+    out.resize(static_cast<size_t>(in.gcount()));
+    in.close();
+    return true;
+}
+
+// std::filesystem::path::string() converts between encodings and throws when the conversion fails, so it cannot be
+// used here. Language code file names are pure ASCII, which needs no conversion at all; anything else can never
+// match a language code, so rejecting it outright loses nothing
+static bool pathToASCII(const std::filesystem::path& path, ui18nstring& out) noexcept
+{
+    const auto& native = path.native();
+
+    // clear() keeps the capacity, so a caller that reuses one string across a directory walk allocates at most once
+    out.clear();
+    out.reserve(native.size());
+    for (const auto a : native)
+    {
+        if (a <= 0 || a > 127)
+            return false;
+        out += static_cast<char>(a);
+    }
+    return true;
+}
+
+// A node is only safe to read from once it passes this. find_child() returns an invalid ref rather than erroring
+// when the key is absent, so this is what turns a missing field into a skipped field
+static bool keyValid(const ryml::ConstNodeRef ref) noexcept
 {
     return !ref.invalid() && ref.readable() && !ref.empty();
 }
@@ -61,40 +116,69 @@ UI18N::InitialisationResult UI18N::TranslationEngine::init(const char* directory
 {
     currentLocale = defaultLocale;
 
+    // Everything loaded from a translation directory is dropped before loading the next one. Without this a second
+    // init() merges the two directories: insert() keeps the older entry on a duplicate id, so stale translations
+    // win over the ones just read, and existingLocales gains a duplicate entry per locale.
+    // Deliberately not cleared: "variables" is pushed through the public API rather than read from the directory,
+    // and cAPITmpResultStorage backs pointers the C API promised would live as long as the engine
+    for (auto& a : translations)
+        a.clear();
+    terms.clear();
+    existingLocales.clear();
+
+    const std::filesystem::path directoryPath{ directory };
+
     // Parser the ui18n-config.yaml file, which contains terms and other configuration variables
-    auto result = parseConfig(directory);
+    auto result = parseConfig(directoryPath);
     if (result != UI18N_INIT_RESULT_SUCCESS)
         return result;
 
-    const ui18nstring ymlExt = ".yaml";
-    const ui18nstring ymlExtShort = ".yml";
-    for (auto& a : std::filesystem::directory_iterator(std::filesystem::path(directory)))
+    // Every std::filesystem call below is the std::error_code overload of its function: the plain ones throw a
+    // filesystem_error, which this engine cannot handle
+    std::error_code iterationError{};
+    std::error_code entryError{};
+
+    auto it = std::filesystem::directory_iterator(directoryPath, iterationError);
+    // The config file was just read out of this directory, so failing to walk it means the directory itself, and
+    // therefore the configuration pointing at it, is unusable
+    if (iterationError)
+        return UI18N_INIT_RESULT_INVALID_CONFIG;
+
+    constexpr std::string_view ymlExt = ".yaml";
+    constexpr std::string_view ymlExtShort = ".yml";
+
+    // Hoisted out of the loop so that the whole directory walk reuses one buffer rather than allocating per entry
+    ui18nstring filename{};
+    for (const std::filesystem::directory_iterator end{}; it != end; it.increment(iterationError))
     {
-        if (!a.is_directory() && (a.path().string().ends_with(".yaml") || a.path().string().ends_with(".yml")))
-        {
-            auto filename = a.path().filename().string();
-            for (size_t i = 0; i < UI18N_LANGUAGE_CODES_COUNT; i++)
-            {
-                const auto& lc = LanguageCodesAsStrings[i];
-                if (filename == (lc + ymlExt) || filename == (lc + ymlExtShort))
-                {
-                    if (parseTranslations(absolute(a.path()).string().c_str(), i) == UI18N_INIT_RESULT_INVALID_TRANSLATION)
-                        result = UI18N_INIT_RESULT_INVALID_TRANSLATION;
-                    goto exit_inner_loop;
-                }
-                auto tmp = filename;
-                for (auto& f : tmp)
-                    if (f == '-')
-                        f = '_';
-                if (tmp == (lc + ymlExt) || filename == (lc + ymlExtShort))
-                {
-                    if (parseTranslations(absolute(a.path()).string().c_str(), i) == UI18N_INIT_RESULT_INVALID_TRANSLATION)
-                        result = UI18N_INIT_RESULT_INVALID_TRANSLATION;
-                    goto exit_inner_loop;
-                }
-            }
-        }
-exit_inner_loop:;
+        if (iterationError)
+            break;
+        if (it->is_directory(entryError) || entryError)
+            continue;
+
+        if (!pathToASCII(it->path().filename(), filename))
+            continue;
+
+        // Cut the extension off, leaving the language code to look up
+        if (endsWithNoCase(filename, ymlExt))
+            filename.resize(filename.size() - ymlExt.size());
+        else if (endsWithNoCase(filename, ymlExtShort))
+            filename.resize(filename.size() - ymlExtShort.size());
+        else
+            continue;
+
+        // Deliberately the same lookup the public API uses, so that a file name and a call to stringToLanguageCode
+        // always agree on which spellings of a code are valid
+        const auto code = stringToLanguageCode(filename.c_str());
+        if (code == UI18N_LANGUAGE_CODES_COUNT)
+            continue;
+
+        auto file = std::filesystem::absolute(it->path(), entryError);
+        if (entryError)
+            file = it->path();
+
+        if (parseTranslations(file, code) == UI18N_INIT_RESULT_INVALID_TRANSLATION)
+            result = UI18N_INIT_RESULT_INVALID_TRANSLATION;
     }
 
     // Record the locales that have at least 1 translation
@@ -107,41 +191,54 @@ exit_inner_loop:;
 
 ui18nstring UI18N::TranslationEngine::get(const char* id, const std::vector<ui18nstring>& positionalArgs, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept
 {
-    // Note: We intentionally use the C++ standard map access syntax, because we don't want to be doing exception
-    // handling, and we also want to return an empty string if accessed in the future.
-    auto rval = translations[currentLocale][id];
-    if (rval.text.empty())
-        return rval.text;
+    if (id == nullptr || currentLocale >= UI18N_LANGUAGE_CODES_COUNT)
+        return {};
+
+    // find(), never operator[]: an unknown id has to return "" without inserting anything. Inserting would make a
+    // lookup a write, so two threads calling get() would race the moment either one misses, and a program that
+    // resolves ids it does not have would grow the map without bound. Reading a hash map from several threads at
+    // once is safe; this is what keeps get() a read
+    const auto& locale = translations[currentLocale];
+    const auto translation = locale.find(id);
+    if (translation == locale.end())
+        return {};
+
+    // Only the text is copied, and the copy is what gets mutated, so the stored translation is never consumed
+    ui18nstring text = translation->second.text;
+    if (text.empty())
+        return text;
 
     // Handle positional arguments with {} syntax
-    getHandlePositionalArguments(rval.text, positionalArgs);
+    getHandlePositionalArguments(text, positionalArgs);
 
     // Handle variable arguments with {var} syntax
-    getHandleVariables(rval.text, rval.references, args);
+    getHandleVariables(text, translation->second.references, args);
 
-    return rval.text;
+    return text;
 }
 
-UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const char* file, size_t lc)
+UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const std::filesystem::path& file, const size_t lc) noexcept
 {
-    const auto string = loadFileToString(file);
-    if (string.empty())
+    // Unlike the config, an empty translation file is an error rather than a degenerate case: it is named after a
+    // locale, so it promises translations, and it declares none
+    ui18nstring string{};
+    if (!loadFileToString(file, string) || string.empty())
         return UI18N_INIT_RESULT_INVALID_TRANSLATION;
 
-    auto tree = ryml::parse_in_arena(string.c_str());
+    const auto tree = ryml::parse_in_arena(string.c_str());
     if (tree.empty())
         return UI18N_INIT_RESULT_INVALID_TRANSLATION;
 
-    auto root = tree.rootref();
+    const auto root = tree.crootref();
 
-    auto trs = root["translations"];
+    const auto trs = root.find_child("translations");
     if (!keyValid(trs) || !trs.is_seq())
         return UI18N_INIT_RESULT_INVALID_TRANSLATION;
 
-    for (auto a : trs.children())
+    for (const auto a : trs.children())
     {
-        auto id = a["id"];
-        auto text = a["text"];
+        const auto id = a.find_child("id");
+        const auto text = a.find_child("text");
 
         if (keyValid(text) && keyValid(id))
         {
@@ -176,21 +273,16 @@ UI18N::InitialisationResult UI18N::TranslationEngine::parseTranslations(const ch
 exit_next_it:;
             }
 
-            // Handle terms
+            // Handle terms. "terms" is a hash map, so each reference is one probe: scanning every term for every
+            // reference made this O(references * terms) for a result a single lookup gives
             for (const auto& f : variable.references)
             {
-                for (const auto& h : terms)
-                {
-                    if (f.first == h.first)
-                    {
-                        replaceVariableInString(variable.text, h.first, h.second);
-                        goto exit_inner_loop_init_2;
-                    }
-                }
-exit_inner_loop_init_2:;
+                const auto term = terms.find(f.first);
+                if (term != terms.end())
+                    replaceVariableInString(variable.text, term->first, term->second);
             }
 
-            auto sw = a["switch"];
+            const auto sw = a.find_child("switch");
             if (keyValid(sw) && sw.is_seq())
                 parseVariablePatternMatching(sw, variable);
 
@@ -204,11 +296,11 @@ exit_inner_loop_init_2:;
     return UI18N_INIT_RESULT_SUCCESS;
 }
 
-void UI18N::TranslationEngine::parseVariablePatternMatching(ryml::NodeRef node, Variable& variable) noexcept
+void UI18N::TranslationEngine::parseVariablePatternMatching(ryml::ConstNodeRef node, Variable& variable) noexcept
 {
-    for (auto f : node.children())
+    for (const auto f : node.children())
     {
-        auto var = f["var"];
+        const auto var = f.find_child("var");
         if (!keyValid(var))
             continue;
 
@@ -216,7 +308,7 @@ void UI18N::TranslationEngine::parseVariablePatternMatching(ryml::NodeRef node, 
         var.load(&variableString);
 
         ui18nstring defaultVal{};
-        auto defaultNode = f["default"];
+        const auto defaultNode = f.find_child("default");
         if (keyValid(defaultNode))
             defaultNode.load(&defaultVal);
 
@@ -228,16 +320,16 @@ void UI18N::TranslationEngine::parseVariablePatternMatching(ryml::NodeRef node, 
         vswitch.defaultValue = defaultVal;
         vswitch.bExists = true;
 
-        auto cases = f["cases"];
+        const auto cases = f.find_child("cases");
         if (keyValid(cases) && cases.is_seq())
         {
-            for (auto h : f["cases"].children())
+            for (const auto h : cases.children())
             {
                 ui18nstring result{};
                 ui18nstring caseStr{};
 
-                auto cc = h["case"];
-                auto cr = h["result"];
+                const auto cc = h.find_child("case");
+                const auto cr = h.find_child("result");
                 if (!keyValid(cc) || !keyValid(cr))
                     goto pattern_match_skip_inner;
 
@@ -257,17 +349,17 @@ pattern_match_skip_inner:;
 
 namespace c4::yml
 {
-    static bool keyValid(ConstNodeRef ref) noexcept
-    {
-        return !ref.invalid() && ref.readable() && !ref.empty();
-    }
-
     // Provided as a plain (internal-linkage) overload rather than an explicit specialisation: since the
     // rapidyaml ReadResult update the primary read() template returns ReadResult, so a bool result is now
     // routed through ReadResult's legacy adapter constructor. static keeps the symbol local to this TU,
     // avoiding a clash with the framework's own read(std::string*) when i18n is compiled into it.
     static bool read(ConstNodeRef const& ref, ui18nstring* t)
     {
+        // val() on a node that has none is a ryml error, and a ryml error aborts. Reporting it as a failed read
+        // instead fails just this field and leaves the rest of the document usable
+        if (!keyValid(ref) || !ref.has_val())
+            return false;
+
         const auto val = ref.val();
         t->resize(val.len);
         memcpy(t->data(), val.data(), val.size());
@@ -294,6 +386,15 @@ namespace c4::yml
         using Key = typename C::key_type;
         using Val = typename C::mapped_type;
 
+        // A ryml key is a csubstr: a pointer and a length into the parse arena, with no terminator of its own, so
+        // the only correct way to build a key from one is to copy exactly key.len bytes. This used to fall back to
+        // assigning the bare pointer for any other key type, which hands out an unbounded, unterminated pointer
+        // into the arena - it happened to be dead code, since every map read here is keyed by ui18nstring. Failing
+        // to compile is the honest answer for a key type that cannot be filled that way
+        static_assert(IsStringLike<Key>,
+                      "read_dict can only fill string-like keys: a ryml key is not null-terminated, so it has to be "
+                      "copied with its length. Give the new key type an explicit conversion here.");
+
         if (!keyValid(ref) || !ref.is_seq())
             return false;
 
@@ -306,16 +407,15 @@ namespace c4::yml
             // key/value pair instead of reading the keyless seq element itself.
             for (const auto& entry : a.children())
             {
+                // key() on a node that has none is a ryml error, see the note in read() above
+                if (!entry.has_key())
+                    continue;
+
                 auto k = entry.key();
 
                 Key key{};
-                if constexpr (IsStringLike<Key>)
-                {
-                    key.resize(k.len);
-                    memcpy(key.data(), k.data(), k.len);
-                }
-                else
-                    key = k.str;
+                key.resize(k.len);
+                memcpy(key.data(), k.data(), k.len);
 
                 Val val{};
                 entry.load(&val);
@@ -335,19 +435,22 @@ namespace c4::yml
 }
 
 
-UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const char* directory)
+UI18N::InitialisationResult UI18N::TranslationEngine::parseConfig(const std::filesystem::path& directory) noexcept
 {
-    const auto string = loadFileToString(ui18nstring(directory) + "/ui18n-config.yaml");
+    ui18nstring string{};
+    if (!loadFileToString(directory / "ui18n-config.yaml", string))
+        return UI18N_INIT_RESULT_INVALID_CONFIG;
+
+    // An empty config file is valid and means exactly what it says: this translation set declares no terms. Only a
+    // missing or unreadable one, rejected above, is a configuration error
     if (string.empty())
-        return UI18N_INIT_RESULT_INVALID_CONFIG;
+        return UI18N_INIT_RESULT_SUCCESS;
 
-    auto tree = ryml::parse_in_arena(string.c_str());
+    const auto tree = ryml::parse_in_arena(string.c_str());
     if (tree.empty())
-        return UI18N_INIT_RESULT_INVALID_CONFIG;
+        return UI18N_INIT_RESULT_SUCCESS;
 
-    auto root = tree.rootref();
-
-    auto terms_l = root["terms"];
+    const auto terms_l = tree.crootref().find_child("terms");
     if (keyValid(terms_l))
         terms_l.load(&terms);
     return UI18N_INIT_RESULT_SUCCESS;
@@ -365,31 +468,42 @@ const char* UI18N::languageCodeToString(const LanguageCodes code) noexcept
     return LanguageCodesAsStrings[code];
 }
 
-ui18nstring toLower(const ui18nstring& arg) noexcept;
+// Compares a code against one canonical spelling without allocating. Lowercasing both sides into fresh strings, as
+// this used to, cost two allocations for every one of the 298 candidates - ~600 per lookup - to answer a question
+// that a character-wise comparison settles at the first letter for all but a handful of them
+static bool localeCodeEquals(const char* code, const char* canonical) noexcept
+{
+    size_t i = 0;
+    for (; code[i] != '\0' && canonical[i] != '\0'; i++)
+    {
+        // Both spellings of the separator are accepted, so normalise the input's as it is read rather than
+        // rewriting the whole string first
+        const char a = (code[i] == '-') ? '_' : asciiToLower(code[i]);
+        if (a != asciiToLower(canonical[i]))
+            return false;
+    }
+    // Equal only if both ended together, otherwise one is a prefix of the other
+    return code[i] == '\0' && canonical[i] == '\0';
+}
 
 UI18N::LanguageCodes UI18N::stringToLanguageCode(const char* code) noexcept
 {
+    if (code == nullptr)
+        return UI18N_LANGUAGE_CODES_COUNT;
+
     for (size_t i = 0; i < UI18N_LANGUAGE_CODES_COUNT; i++)
-    {
-        ui18nstring tmp = toLower(code);
-        const ui18nstring languageCode = toLower(LanguageCodesAsStrings[i]);
-
-        if (tmp == languageCode)
+        if (localeCodeEquals(code, LanguageCodesAsStrings[i]))
             return static_cast<LanguageCodes>(i);
 
-        for (auto& a : tmp)
-            if (a == '-')
-                a = '_';
-        if (tmp == languageCode)
-            return static_cast<LanguageCodes>(i);
-    }
     return UI18N_LANGUAGE_CODES_COUNT;
 }
 
 void UI18N::TranslationEngine::replaceVariableInString(ui18nstring& str, const ui18nstring& replaceName, const ui18nstring& replace) noexcept
 {
     const ui18nstring pattern = "{" + replaceName + "}";
-    for (size_t offset = str.find(pattern); offset != ui18nstring::npos; offset = str.find(pattern, offset))
+    // Resume searching after the text we just inserted, never at its start: a replacement that itself contains
+    // "{replaceName}" would otherwise be re-matched forever
+    for (size_t offset = str.find(pattern); offset != ui18nstring::npos; offset = str.find(pattern, offset + replace.size()))
         str.replace(offset, pattern.size(), replace);
 }
 
@@ -399,78 +513,91 @@ void UI18N::TranslationEngine::getHandlePositionalArguments(ui18nstring& text, c
     for (const auto& f : args)
     {
         const auto pos = text.find("{}", ppos);
-        ppos = pos;
         if (pos == ui18nstring::npos)
             break;
         text.replace(pos, 2, f);
+        // Resume past the argument just inserted, never at its start: an argument whose own value contains "{}"
+        // would otherwise be rescanned, and the next argument would land inside the previous one instead of in
+        // the next real placeholder
+        ppos = pos + f.size();
     }
 }
 
 void UI18N::TranslationEngine::getHandleVariables(ui18nstring& text, const ui18nmap<ui18nstring, Switch>& references, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept
 {
+    // Both containers are hash maps, so each reference is resolved with a probe rather than by scanning them. The
+    // scans this replaces were O(references * (variables + args)) and, because they yielded the map's own
+    // value_type (whose key is const), every match also copied both of its strings into the pair parameter that
+    // used to be passed on from here. A duplicate match is still ignored: the first container to answer wins
     for (const auto& f : references)
     {
         // Engine variables, added for long-term storage by the "pushVariable" method
-        for (auto& var : variables)
+        const auto variable = variables.find(f.first);
+        if (variable != variables.end())
         {
-            // If the reference and variable names match
-            if (f.first == var.first)
-            {
-                getHandleReplaceWithVal(f.second, text, var, {});
-                goto exit_inner_loop_get_1;
-            }
+            getHandleReplaceWithVal(f.second, text, variable->first, variable->second, {});
+            continue;
         }
+
         // Variables as argument, added by the "args" argument of this function
-        for (auto& var : args)
+        const auto arg = args.find(f.first);
+        if (arg != args.end())
         {
-            if (f.first == var.first)
-            {
-                getHandleReplaceWithVal(f.second, text, var, args);
-                goto exit_inner_loop_get_1;
-            }
+            getHandleReplaceWithVal(f.second, text, arg->first, arg->second, args);
+            continue;
         }
-        // Both  functions skip to this point because we ignore duplicates, so if one loop matches a variable reference
-        // we should directly escape, not reiterate through the other variables again, just to waste cycles
-exit_inner_loop_get_1:;
+
+        // No variable was supplied for this reference. If it declares a switch, fall back to the switch's default
+        // value, since an absent variable is exactly what a default is for. Without a switch there is nothing to
+        // substitute, so the placeholder is left untouched
+        if (f.second.bExists)
+            getHandleReplaceWithDefault(f.second, text, f.first, args);
     }
 }
 
-void UI18N::TranslationEngine::getHandleReplaceWithVal(const Switch& switchA, ui18nstring& text, const std::pair<ui18nstring, ui18nstring>& variable, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept
+// The variable is taken as a separate name and value rather than as a pair: the caller's pair comes out of a hash
+// map, whose value_type has a const key, so binding it to a pair with a non-const key copied both strings
+void UI18N::TranslationEngine::getHandleReplaceWithVal(const Switch& switchA, ui18nstring& text, const ui18nstring& name, const ui18nstring& value, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept
 {
-    // If we have a switch statement
-    if (switchA.bExists)
+    // Default behaviour, when there is no switch statement
+    if (!switchA.bExists)
     {
-        // Iterate patterns
-        for (const auto& a : switchA.patterns)
-        {
-            // If the case key is equal to the value of the variable
-            if (a.first == variable.second)
-            {
-                auto resultTmp = a.second;
-                // Replace any variables that may be templated into the result key
-                for (const auto& f : variables)
-                    replaceVariableInString(resultTmp, f.first, f.second);
-                // Also from the temporary variable list if provided
-                for (const auto& f : args)
-                    replaceVariableInString(resultTmp, f.first, f.second);
-
-                replaceVariableInString(text, variable.first, resultTmp);
-                return;
-            }
-        }
-        // Replace any variables in the default variable
-        auto defaultValTmp = switchA.defaultValue;
-        for (const auto& a : variables)
-            replaceVariableInString(defaultValTmp, a.first, a.second);
-        // Also from the temporary variable list if provided
-        for (const auto& a : args)
-            replaceVariableInString(defaultValTmp, a.first, a.second);
-
-        // Finally replace everything in the default value
-        replaceVariableInString(text, variable.first, defaultValTmp);
+        replaceVariableInString(text, name, value);
+        return;
     }
-    else // Default behaviour
-        replaceVariableInString(text, variable.first, variable.second);
+
+    // The patterns are a hash map keyed by the case, so the matching one is a probe rather than a scan of them all
+    const auto pattern = switchA.patterns.find(value);
+    // No case matched the value of the variable, so use the default
+    if (pattern == switchA.patterns.end())
+    {
+        getHandleReplaceWithDefault(switchA, text, name, args);
+        return;
+    }
+
+    auto resultTmp = pattern->second;
+    // Replace any variables that may be templated into the result key
+    for (const auto& f : variables)
+        replaceVariableInString(resultTmp, f.first, f.second);
+    // Also from the temporary variable list if provided
+    for (const auto& f : args)
+        replaceVariableInString(resultTmp, f.first, f.second);
+
+    replaceVariableInString(text, name, resultTmp);
+}
+
+void UI18N::TranslationEngine::getHandleReplaceWithDefault(const Switch& switchA, ui18nstring& text, const ui18nstring& name, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept
+{
+    // Replace any variables in the default variable
+    auto defaultValTmp = switchA.defaultValue;
+    for (const auto& a : variables)
+        replaceVariableInString(defaultValTmp, a.first, a.second);
+    // Also from the temporary variable list if provided
+    for (const auto& a : args)
+        replaceVariableInString(defaultValTmp, a.first, a.second);
+
+    // Finally replace everything in the default value
+    replaceVariableInString(text, name, defaultValTmp);
 }
 
 void UI18N::TranslationEngine::setCurrentLocale(const LanguageCodes locale) noexcept
@@ -481,12 +608,4 @@ void UI18N::TranslationEngine::setCurrentLocale(const LanguageCodes locale) noex
 const std::vector<UI18N::LanguageCodes>& UI18N::TranslationEngine::getExistingLocales() noexcept
 {
     return existingLocales;
-}
-
-ui18nstring toLower(const ui18nstring& arg) noexcept
-{
-    ui18nstring tmp = arg;
-    for (auto& a : tmp)
-        a = static_cast<char>(tolower(a));
-    return tmp;
 }

@@ -2,6 +2,8 @@
 #include "Common.h"
 #include "parallel-hashmap/parallel_hashmap/phmap.h"
 #include <array>
+#include <deque>
+#include <filesystem>
 #include <vector>
 #include <ryml.hpp>
 
@@ -68,17 +70,21 @@ namespace UI18N
 
         static void replaceVariableInString(ui18nstring& str, const ui18nstring& replaceName, const ui18nstring& replace) noexcept;
 
-        InitialisationResult parseConfig(const char* directory);
-        InitialisationResult parseTranslations(const char* file, size_t lc);
-        void parseVariablePatternMatching(ryml::NodeRef node, Variable& variable) noexcept;
+        InitialisationResult parseConfig(const std::filesystem::path& directory) noexcept;
+        InitialisationResult parseTranslations(const std::filesystem::path& file, size_t lc) noexcept;
+        void parseVariablePatternMatching(ryml::ConstNodeRef node, Variable& variable) noexcept;
 
         static void getHandlePositionalArguments(ui18nstring& text, const std::vector<ui18nstring>& args) noexcept;
         void getHandleVariables(ui18nstring& text, const ui18nmap<ui18nstring, Switch>& references, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept;
-        void getHandleReplaceWithVal(const Switch& switchA, ui18nstring& text, const std::pair<ui18nstring, ui18nstring>& variable, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept;
+        void getHandleReplaceWithVal(const Switch& switchA, ui18nstring& text, const ui18nstring& name, const ui18nstring& value, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept;
+        void getHandleReplaceWithDefault(const Switch& switchA, ui18nstring& text, const ui18nstring& name, const ui18nmap<ui18nstring, ui18nstring>& args) noexcept;
 
         LanguageCodes currentLocale = en_US;
 
-        std::vector<ui18nstring> cAPITmpResultStorage;
+        // Owns the strings handed out as "const char*" by the C API. A deque, not a vector: the C API promises that
+        // every pointer it returned stays valid for the life of the engine, and vector growth relocates its
+        // elements, which dangles every previously returned pointer into a short (small-string-optimised) string
+        std::deque<ui18nstring> cAPITmpResultStorage;
 
         std::vector<LanguageCodes> existingLocales{};
 

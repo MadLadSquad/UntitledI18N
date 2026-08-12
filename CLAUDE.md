@@ -70,10 +70,26 @@ by both the C++ header and the C header.
 `stringToLanguageCode`. `LanguageCodesAsStrings` in `UI18N.cpp` **must stay 1:1 in order and length with the enum
 in `Common.h`** — lookups index one array with the other's enum value.
 
+`stringToLanguageCode` walks that array and compares character by character, folding case with an **ASCII-only**
+`asciiToLower` rather than `std::tolower`: a locale code is pure ASCII, whereas `tolower` is undefined for negative
+(non-ASCII UTF-8) bytes and answers to whatever `LC_CTYPE` the host program has set. It allocates nothing and bails
+out at the first differing character, which matters because `init()` calls it once per file in the directory it
+scans — the older form built two fresh lowercase strings for each of the 298 candidates on every lookup.
+
 `C/cui18n.{h,cpp}` is a thin wrapper: an opaque `UI18N_CTranslationEngine*` that is really a
 `TranslationEngine*`, cast via the `cast()` macro. `UI18N::Internal` (a `friend` of `TranslationEngine`) exists
-solely to let the C layer reach the private `cAPITmpResultStorage` vector, which owns the returned `const char*`
-buffers — they stay alive for the life of the engine and grow without bound, by design.
+solely to let the C layer reach the private `cAPITmpResultStorage`, which owns the returned `const char*`
+buffers — they stay alive for the life of the engine and grow without bound, by design. It must stay a
+**`std::deque`, never a `std::vector`**: vector growth relocates its elements, and a short string keeps its
+characters inside the element itself (small-string optimisation), so every `const char*` handed out earlier would
+dangle the moment the vector reallocates.
+
+C callers can pass null anywhere, and `ui18nstring` cannot be built from a null pointer — libstdc++ answers that
+with a `std::logic_error`, which in this library means `std::terminate`. So `UI18N_TranslationEngine_get` drops
+any `UI18N_Pair` missing its key or its value rather than guessing at it, leaving the placeholder to its switch
+default exactly as if the caller had not passed it, and skips null positional arguments the same way. A null
+`engine` is the one input it answers with `nullptr`: the result buffer lives in the engine, so there is nowhere to
+put a string. A null `id` is not an error — `get()` already reports an unknown id as `""`.
 
 ### Data model
 
@@ -92,18 +108,53 @@ Three substitution mechanisms, applied in this order by `get()`:
 Terms from `ui18n-config.yaml` are different: they are substituted **at parse time** into the translation text,
 switch defaults, and switch results — never at `get()` time.
 
-`get()` copies the `Variable` out of the map by value and mutates the copy, so the stored translation is never
-consumed. Note it uses `operator[]` deliberately (see the comment in the source): unknown IDs insert an empty
-entry and return `""` rather than throwing. The library is exception-free and nearly everything is `noexcept`;
-`parseConfig`/`parseTranslations` are the exceptions since ryml may throw.
+`get()` looks the id up with **`find()`, never `operator[]`**, and copies out only `text` — the one field it
+mutates — so the stored translation is never consumed. `operator[]` would turn every lookup into a write: two
+threads calling `get()` would race the moment either one missed, and a program resolving ids it does not have
+would grow the map without bound. As written, `get()` is a pure read and is safe to call concurrently. An unknown
+id, a null id, and an out-of-range `currentLocale` all return `""`. Every function in the library is `noexcept` —
+see "Error handling" below.
+
+Every container the resolution path consults is a hash map — `variables`, `args`, a `Switch`'s `patterns`, and
+`terms` at parse time — and each is reached with `find()`. Scanning them, as this used to, is not merely
+O(references × (variables + args)): a scan yields the map's own `value_type`, whose key is `const`, so binding it
+to a `std::pair<ui18nstring, ui18nstring>` copied both strings on every match.
+`getHandleReplaceWithVal` therefore takes the variable's name and value as two separate parameters — don't fold
+them back into a pair.
+
+`init()` clears `translations`, `terms` and `existingLocales` before loading, so calling it again switches
+translation directories cleanly instead of merging them (`insert` keeps the *older* entry on a duplicate id, so a
+merge would let stale translations win). Deliberately kept across a re-init: `variables`, which is pushed through
+the public API rather than read from the directory, and `cAPITmpResultStorage`, which backs pointers the C API
+promised would outlive individual calls. A failed re-init leaves the engine empty rather than still serving the
+previous directory.
 
 ### Translation file format
 
 `init(directory, defaultLocale)` reads `<directory>/ui18n-config.yaml`, then scans the directory (non-recursively)
-for `*.yaml`/`*.yml` whose stem matches a language code. Both `en_US.yaml` and `en-US.yaml` spellings are accepted.
-Files that don't match a known code are silently ignored. A missing/unparseable config returns
-`UI18N_INIT_RESULT_INVALID_CONFIG` and aborts; a bad translation file downgrades the overall result to
-`UI18N_INIT_RESULT_INVALID_TRANSLATION` but parsing of other files continues.
+for `*.yaml`/`*.yml` and resolves each stem through `stringToLanguageCode` — deliberately the same lookup the
+public API uses, so a file name and a call always agree on which spellings are valid: case-insensitive, either
+separator (`en_US.yaml`, `en-US.yml`, `en_us.yaml`). The extension is matched case-insensitively too
+(`en_GB.YAML`, `en_GB.Yml`), so the whole file name is; a name is the user's to write, and on Windows and macOS
+the same file may answer to several spellings. Only `.yaml`/`.yml` count — no other extension is read. Files that don't match a known code are silently ignored.
+A missing or unreadable config returns `UI18N_INIT_RESULT_INVALID_CONFIG` and stops. An *empty* config is not an
+error — it declares no terms, which is legal — so `loadFileToString` reports "could not open" separately from
+"opened, no content"; only the first is fatal. An empty *translation* file is still
+`UI18N_INIT_RESULT_INVALID_TRANSLATION`, since a file named after a locale promises translations. A translation
+file that parses but is structurally wrong downgrades the overall result to `UI18N_INIT_RESULT_INVALID_TRANSLATION`
+while parsing of the other files continues. A file that fails to *parse* is not recoverable — see "Errors" under
+"rapidyaml integration gotchas".
+
+Translation files are read in **binary mode**. In text mode Windows collapses each CRLF to one character, so fewer
+characters arrive than `tellg()` reported and the tail of the buffer keeps its padding; the read is additionally
+truncated to `gcount()` rather than to the reported size.
+
+There is exactly one spelling of each code, and it is the one in `LanguageCodesAsStrings` — no alias table, no
+deprecated enumerators. Japanese was renamed `jp_JP` → `ja_JP` (`ja` is the ISO 639-1 language code; `jp` is only
+the country code) as a clean break: `jp_JP.yaml` files and code naming the `jp_JP` enumerator must be updated.
+Renaming a code this way is a source-breaking change but not an ABI-breaking one, as long as the entry keeps its
+position — the enum is numbered implicitly and `translations` is indexed by it, so reordering or inserting shifts
+every locale after it.
 
 `ui18n-config.yaml`:
 ```yaml
@@ -138,10 +189,68 @@ them when touching that code:
   i18n is compiled into it.
 - `read_dict` takes the container type directly instead of a template-template parameter, because
   `phmap::parallel_flat_hash_map` mixes type and non-type template parameters and no template-template form
-  matches portably across GCC/Clang/MSVC.
+  matches portably across GCC/Clang/MSVC. It copies each key with `memcpy` for exactly `key.len` bytes and
+  `static_assert`s that the key type is string-like: a ryml key is a `csubstr`, a pointer and a length into the
+  parse arena with **no terminator of its own**, so building a key from the bare pointer runs on past the end of
+  the arena. (Instantiated with a `const char*` key, the version that did so read 246 bytes past a 256-byte
+  arena under ASan.) A new key type that cannot be filled by length needs an explicit conversion here, which is
+  what the assertion asks for.
+
+**Errors: guard before you access, and never write recovery machinery.** ryml reports every error by calling a
+callback that *must not return* (see `pfn_error_parse` in `rapidyaml/src/c4/yml/common.hpp`); the README names the
+only three ways to implement one — an exception, `std::longjmp`, or `abort()`. There is no status-returning parse
+API: `parse_in_arena` returns `void`/`Tree`, and `Parser` carries no error flag. `ReadResult` is a
+*deserialization* result, not a parse one. So the way to stay error-free is to never reach the callback:
+
+- Read through **`ConstNodeRef` + `find_child("x")`**, never `operator[]`, whenever the key may be absent —
+  `find_child` returns an invalid ref for a missing key, which `keyValid` rejects, whereas const `operator[]`
+  errors. Check `is_seq()` before iterating children, and `has_key()`/`has_val()` before `key()`/`val()` (the
+  `read` overload at the bottom of `UI18N.cpp` does the latter). One malformed field then fails that field
+  instead of the whole file.
+- What this does **not** cover is a *syntactically* malformed document: `parse_in_arena` reaches the callback and
+  the default handler aborts. That is a known and accepted limitation — `init`'s `INVALID_CONFIG`/
+  `INVALID_TRANSLATION` results cover a missing or unreadable file, an empty translation file, and a file that
+  parses but is structurally wrong, not a file that fails to parse. The framework accepts the same limitation for
+  its own configs.
+- Do **not** reintroduce a `setjmp`/`longjmp` guard, a custom error callback, or allocation bookkeeping to work
+  around this. It has been tried; it costs far more complexity than the behaviour is worth, and jumping out of
+  the parser is undefined behaviour the moment a non-trivial destructor is skipped.
 
 Frequent "Update ryml" commits come from the automated `update.yml` workflow bumping submodules; rapidyaml API
 churn is the usual cause of build breakage here.
+
+## Error handling — no exceptions
+
+**Never use `throw`, `try`/`catch`, or any API whose error path is an exception.** This is not a style
+preference: UntitledImGuiFramework consumes this library, and its Emscripten builds have no exception support at
+all, so a throw does not unwind — it calls `abort()` and takes the process down, and a `catch` written against it
+is dead code. Every function here is additionally marked `noexcept`, where an escaping exception is
+`std::terminate` on every platform.
+
+Report errors by return value instead: an `InitialisationResult`, a `bool`, an empty string, or a null handle.
+Keep new public API `noexcept`, and keep private helpers `noexcept` too — the annotation is what makes an
+accidental throwing call a hard error rather than a silent hazard.
+
+Standard-library APIs to avoid, with the replacement used in-tree:
+
+- **`std::filesystem`'s throwing overloads** — `directory_iterator`, `directory_entry::is_directory`,
+  `absolute`, and the iterator's `operator++` all throw `filesystem_error`. Every one of them has an overload
+  taking a `std::error_code&`; `init` uses those exclusively, and steps the iterator with `it.increment(ec)`
+  rather than `++it`.
+- **`std::filesystem::path::string()`** — converts between encodings and throws when the conversion fails. Use
+  `path::native()`, which is a plain accessor. `pathToASCII` in `UI18N.cpp` is the in-tree conversion: language
+  code file names are pure ASCII, and anything else can never match a code, so it is rejected rather than
+  converted.
+- **`operator new`** — use `new(std::nothrow)` and null-check, as `UI18N_TranslationEngine_Construct` does.
+- **`.at()` on containers** — use `operator[]` after checking bounds, or `find()`.
+- **`std::stoi`/`std::stof`/`std::stod`** — use `std::from_chars` or the `strtol`/`strtod` family.
+- **rapidyaml** — never throws with the default callbacks, but they abort, which is just as fatal. There is no
+  error-returning parse API; the only defence is to guard node access so the callback is never reached. See
+  "rapidyaml integration gotchas".
+
+`std::bad_alloc` is the one exception (in both senses) that is out of scope: allocation is pervasive here —
+`ui18nstring` alone allocates on nearly every line — so there is no meaningful boundary at which to handle it.
+Allocations we make *directly*, on the other hand, still use the non-throwing forms above.
 
 ## Embedding in UntitledImGuiFramework
 
@@ -160,3 +269,13 @@ annotation on new public API, since the framework's docs rely on it.
 - Loops use forward `goto` to labels (`exit_inner_loop:;`) for multi-level breaks; this is the established style
   here, not an accident.
 - British spelling in identifiers (`InitialisationResult`, `parseVariablePatternMatching`).
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
